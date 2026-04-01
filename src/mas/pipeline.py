@@ -1,4 +1,4 @@
-"""Main pipeline — ties together orchestrator, agents, memory, and LLMOps."""
+"""Main pipeline — ties together orchestrator, agents, memory, session, and LLMOps."""
 
 from __future__ import annotations
 
@@ -13,14 +13,14 @@ from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
 from mas.a2a.bus import MessageBus
-# Core agents (kept)
+# Core agents
 from mas.agents.kg import KGBuilderAgent, KGQueryAgent  # noqa: F401
 from mas.agents.reasoning import AnalystAgent, SynthesizerAgent  # noqa: F401
 from mas.agents.registry import registry
-# RAG-Anything agent (replaces 7 legacy agents)
+# RAG-Anything agent
 from mas.agents.rag import RAGAnythingAgent, RAGEngine  # noqa: F401
 from mas.agents.rag.raganything_agent import set_rag_engine
-# Legacy agents (still registered as fallback)
+# Legacy agents (fallback)
 from mas.agents.ingestion import ChunkerAgent, ContentSeparatorAgent, IngestionAgent  # noqa: F401
 from mas.agents.modal import ImageProcessor, TableProcessor, TextProcessor  # noqa: F401
 from mas.agents.retrieval import EmbedderAgent, HybridRetrieverAgent  # noqa: F401
@@ -32,6 +32,7 @@ from mas.llmops.tracing import TracingManager
 from mas.memory.knowledge_graph import KnowledgeGraph
 from mas.memory.shared import SharedMemory
 from mas.orchestrator.graph import build_orchestrator_graph
+from mas.session import SessionManager
 from mas.tools.mcp_client import MCPToolClient
 
 logger = structlog.get_logger()
@@ -39,15 +40,11 @@ logger = structlog.get_logger()
 
 class MASPipeline:
     """
-    Production pipeline — single entry point for the multi-agent system.
+    Production pipeline with session management.
 
-    Wires together all 5 layers:
-      - Orchestrator: LangGraph (plan → execute → review → synthesize)
-      - Agents: 12 data-agnostic agents via registry
-      - Memory: SharedMemory (ChromaDB) + KnowledgeGraph (NetworkX/Neo4j) + LocalMemory
-      - Tools: MCP client for external data/tool access
-      - LLMOps: tracing, cost tracking, evaluation, monitoring
-      - A2A: MessageBus for inter-agent communication
+    Key difference from before: the pipeline is session-aware.
+    Each conversation gets a Session that persists document state,
+    pipeline context, and message history between messages.
     """
 
     def __init__(self, config: MASConfig | None = None) -> None:
@@ -65,7 +62,7 @@ class MASPipeline:
         self.evaluator = EvaluationEngine()
         self.monitor = HealthMonitor()
 
-        # Memory
+        # Memory (Layer 3 — persistent)
         self.shared_memory = SharedMemory(
             collection_name=self.config.memory.shared_collection,
             persist_dir=str(self.config.memory.chroma_persist_dir),
@@ -73,6 +70,9 @@ class MASPipeline:
         self.knowledge_graph = KnowledgeGraph(
             neo4j_uri=self.config.memory.neo4j_uri if self.config.memory.neo4j_uri != "bolt://localhost:7687" else None,
         )
+
+        # Session manager (conversation persistence)
+        self.session_manager = SessionManager(self.config.data_dir / "sessions")
 
         # A2A message bus
         self.message_bus = MessageBus()
@@ -94,10 +94,10 @@ class MASPipeline:
         self.orchestrator_llm = self._create_llm(self.config.llm.orchestrator_model)
         self.worker_llm = self._create_llm(self.config.llm.worker_model)
 
-        # Registry (agents auto-register via decorators on import above)
+        # Registry
         self.registry = registry
 
-        # Build orchestrator graph — passes all infrastructure to agents
+        # Build orchestrator graph
         self._graph = build_orchestrator_graph(
             orchestrator_llm=self.orchestrator_llm,
             worker_llm=self.worker_llm,
@@ -117,14 +117,9 @@ class MASPipeline:
             agents=len(self.registry.list_agents()),
             orchestrator=self.config.llm.orchestrator_model,
             worker=self.config.llm.worker_model,
-            shared_memory=True,
-            knowledge_graph=True,
-            message_bus=True,
-            mcp_tools=len(self.mcp_client.list_tools()),
         )
 
     def _create_llm(self, model: str) -> BaseChatModel:
-        """Create an LLM instance based on model name."""
         if "claude" in model or "anthropic" in model:
             return ChatAnthropic(
                 model=model,
@@ -132,26 +127,49 @@ class MASPipeline:
                 max_retries=self.config.llm.max_retries,
                 timeout=self.config.llm.request_timeout,
             )
-        else:
-            return ChatOpenAI(
-                model=model,
-                temperature=self.config.llm.temperature,
-                max_retries=self.config.llm.max_retries,
-                timeout=self.config.llm.request_timeout,
-            )
+        return ChatOpenAI(
+            model=model,
+            temperature=self.config.llm.temperature,
+            max_retries=self.config.llm.max_retries,
+            timeout=self.config.llm.request_timeout,
+        )
 
     async def run(
         self,
         query: str,
         context: dict[str, Any] | None = None,
         max_iterations: int = 3,
+        session_id: str | None = None,
     ) -> dict[str, Any]:
-        """Run the full multi-agent pipeline."""
-        from mas.orchestrator.state import PipelineState
+        """
+        Run the pipeline — session-aware.
 
-        initial_state: PipelineState = {
+        If session_id is provided, loads existing session state so:
+          - Already-ingested documents are not re-processed
+          - Previous messages inform the current query
+          - Pipeline context is carried forward
+        """
+        context = context or {}
+
+        # Load or create session
+        session = self.session_manager.get(session_id or "default")
+
+        # Record user message in session
+        session.add_message("user", query)
+
+        # Build session data for the graph
+        session_data = {
+            "pipeline_context": session.pipeline_context.model_dump(),
+            "ingested_docs": session.ingested_docs,
+            "message_history": session.get_recent_history(6),
+        }
+
+        initial_state = {
             "user_query": query,
-            "user_context": context or {},
+            "user_context": context,
+            "session_id": session.session_id,
+            "session_data": session_data,
+            "session_update": {},
             "plan": [],
             "current_phase": "planning",
             "pending_tasks": [],
@@ -159,8 +177,9 @@ class MASPipeline:
             "completed_task_ids": [],
             "results": [],
             "messages": [],
-            "task_ledger": "",
-            "progress_ledger": "",
+            "task_ledger": {},
+            "progress_ledger": {},
+            "token_budget": {},
             "iteration": 0,
             "max_iterations": max_iterations,
             "should_replan": False,
@@ -169,7 +188,24 @@ class MASPipeline:
 
         result = await self._compiled.ainvoke(initial_state)
 
-        # Flush tracing
-        self.tracing.flush()
+        # Update session with pipeline results
+        session_update = result.get("session_update", {})
+        if "pipeline_context" in session_update:
+            from mas.schemas.context import PipelineContext
+            session.update_context(PipelineContext.model_validate(session_update["pipeline_context"]))
+        if "ingested_docs" in session_update:
+            for path, doc_id in session_update["ingested_docs"].items():
+                session.register_document(path, doc_id)
 
-        return result.get("final_output", {})
+        # Record assistant response in session
+        final = result.get("final_output", {})
+        analysis = final.get("analysis", {})
+        answer = analysis.get("answer", "") if analysis else final.get("rag_response", "")
+        if answer:
+            session.add_message("assistant", answer[:2000])
+
+        # Save session
+        session.save()
+
+        self.tracing.flush()
+        return final

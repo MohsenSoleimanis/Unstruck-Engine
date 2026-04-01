@@ -43,6 +43,9 @@ def _build_initial_state(query: str, context: dict, max_iterations: int) -> dict
     return {
         "user_query": query,
         "user_context": context,
+        "session_id": "",
+        "session_data": {},
+        "session_update": {},
         "plan": [],
         "current_phase": "planning",
         "pending_tasks": [],
@@ -50,8 +53,9 @@ def _build_initial_state(query: str, context: dict, max_iterations: int) -> dict
         "completed_task_ids": [],
         "results": [],
         "messages": [],
-        "task_ledger": "",
-        "progress_ledger": "",
+        "task_ledger": {},
+        "progress_ledger": {},
+        "token_budget": {},
         "iteration": 0,
         "max_iterations": max_iterations,
         "should_replan": False,
@@ -98,9 +102,23 @@ async def query_stream(request: QueryRequest):
     async def event_generator():
         stream_id = uuid.uuid4().hex[:8]
         start = time.perf_counter()
+        session_id = request.conversation_id or stream_id
 
         try:
+            # Use session-aware run path
+            session = pipeline.session_manager.get(session_id)
+            session.add_message("user", request.query)
+
+            session_data = {
+                "pipeline_context": session.pipeline_context.model_dump(),
+                "ingested_docs": session.ingested_docs,
+                "message_history": session.get_recent_history(6),
+            }
+
             initial_state = _build_initial_state(request.query, request.context, request.max_iterations)
+            initial_state["session_id"] = session_id
+            initial_state["session_data"] = session_data
+            initial_state["session_update"] = {}
 
             # astream with stream_mode="updates" yields {node_name: output_dict}
             async for chunk in pipeline._compiled.astream(initial_state, stream_mode="updates"):
@@ -148,6 +166,21 @@ async def query_stream(request: QueryRequest):
                             "cost": pipeline.cost_tracker.get_summary(),
                             "duration_ms": duration_ms,
                         })
+
+                        # Save session after completion
+                        session_update = node_output.get("session_update", {})
+                        if session_update:
+                            if "pipeline_context" in session_update:
+                                from mas.schemas.context import PipelineContext
+                                session.update_context(PipelineContext.model_validate(session_update["pipeline_context"]))
+                            if "ingested_docs" in session_update:
+                                for path, doc_id in session_update["ingested_docs"].items():
+                                    session.register_document(path, doc_id)
+                        analysis = final.get("analysis", {})
+                        answer = (analysis.get("answer", "") if analysis else final.get("rag_response", ""))
+                        if answer:
+                            session.add_message("assistant", str(answer)[:2000])
+                        session.save()
 
         except Exception as e:
             logger.exception("query_stream.failed", stream_id=stream_id)

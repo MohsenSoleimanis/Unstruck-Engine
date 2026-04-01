@@ -76,8 +76,24 @@ class Planner:
 
         system_msg = SystemMessage(content=PLANNER_SYSTEM_PROMPT.format(agent_list=agent_list))
         user_content = f"User request: {user_query}"
+
+        # Session awareness
         if context:
-            user_content += f"\n\nAdditional context (pass this to agents): {json.dumps(context, default=str)}"
+            if context.get("already_ingested"):
+                user_content += "\n\nIMPORTANT: The document is already ingested. Skip the ingest step. Go straight to query + analyst."
+            elif context.get("file_path"):
+                user_content += f"\n\nA file is attached: {context['file_path']}"
+
+            # Conversation history
+            history = context.get("conversation_history", [])
+            if history:
+                user_content += "\n\nPrevious conversation:\n"
+                for msg in history:
+                    user_content += f"{msg.get('role', '').upper()}: {msg.get('content', '')[:300]}\n"
+
+            safe_context = {k: v for k, v in context.items() if k not in ("conversation_history", "already_ingested")}
+            if safe_context:
+                user_content += f"\n\nContext: {json.dumps(safe_context, default=str)}"
 
         response = await self.llm.ainvoke([system_msg, HumanMessage(content=user_content)])
         return self._parse_plan(response.content)
