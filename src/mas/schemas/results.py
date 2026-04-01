@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -28,4 +28,4 @@ class AgentResult(BaseModel):
     token_usage: dict[str, int] = Field(default_factory=dict)
     cost_usd: float = 0.0
     duration_ms: int = 0
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

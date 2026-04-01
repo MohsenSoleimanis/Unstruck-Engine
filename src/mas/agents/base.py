@@ -88,7 +88,7 @@ class BaseAgent(ABC):
                     task_id=task.id,
                     token_usage=result.token_usage,
                     cost_usd=result.cost_usd,
-                    model=self.llm.model_name if hasattr(self.llm, "model_name") else "unknown",
+                    model=getattr(self.llm, "model_name", None) or getattr(self.llm, "model", "unknown"),
                 )
 
             # Store result in shared memory so other agents can access it

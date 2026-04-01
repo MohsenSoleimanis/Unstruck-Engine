@@ -118,6 +118,7 @@ class Router:
                 return_exceptions=True,
             )
 
+            completed_in_batch: set[str] = set()
             for task, result in zip(ready, batch_results):
                 if isinstance(result, Exception):
                     result = AgentResult(
@@ -129,7 +130,9 @@ class Router:
                     )
                 results.append(result)
                 completed_ids.add(task.id)
-                remaining.remove(task)
+                completed_in_batch.add(task.id)
+
+            remaining = [t for t in remaining if t.id not in completed_in_batch]
 
         return results
 

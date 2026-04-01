@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from collections import deque
+from datetime import datetime, timezone
 from typing import Any
 
 import structlog
@@ -23,14 +24,14 @@ class HealthMonitor:
 
     def __init__(self) -> None:
         self._agent_status: dict[str, dict[str, Any]] = {}
-        self._pipeline_metrics: list[dict[str, Any]] = []
-        self._alerts: list[dict[str, Any]] = []
+        self._pipeline_metrics: deque[dict[str, Any]] = deque(maxlen=1000)
+        self._alerts: deque[dict[str, Any]] = deque(maxlen=500)
 
     def report_agent_status(self, agent_id: str, agent_type: str, healthy: bool, metadata: dict | None = None) -> None:
         self._agent_status[agent_id] = {
             "agent_type": agent_type,
             "healthy": healthy,
-            "last_seen": datetime.utcnow().isoformat(),
+            "last_seen": datetime.now(timezone.utc).isoformat(),
             **(metadata or {}),
         }
         if not healthy:
@@ -46,7 +47,7 @@ class HealthMonitor:
     ) -> None:
         self._pipeline_metrics.append({
             "pipeline_id": pipeline_id,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "duration_ms": duration_ms,
             "task_count": task_count,
             "success_count": success_count,
@@ -55,7 +56,7 @@ class HealthMonitor:
         })
 
     def _alert(self, message: str, severity: str = "info") -> None:
-        alert = {"message": message, "severity": severity, "timestamp": datetime.utcnow().isoformat()}
+        alert = {"message": message, "severity": severity, "timestamp": datetime.now(timezone.utc).isoformat()}
         self._alerts.append(alert)
         logger.warning("monitor.alert", **alert)
 

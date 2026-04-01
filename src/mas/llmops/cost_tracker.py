@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +54,7 @@ class CostTracker:
             cost_usd = (input_tokens * inp_price + output_tokens * out_price) / 1_000_000
 
         entry = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent_id": agent_id,
             "agent_type": agent_type,
             "task_id": task_id,

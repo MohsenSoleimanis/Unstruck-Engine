@@ -51,7 +51,7 @@ class ChunkerAgent(BaseAgent):
 
         # Add metadata to each chunk
         for i, chunk in enumerate(chunks):
-            chunk["chunk_id"] = hashlib.md5(f"{source}_{i}_{chunk['text'][:50]}".encode()).hexdigest()[:12]
+            chunk["chunk_id"] = hashlib.sha256(f"{source}_{i}_{chunk['text'][:50]}".encode()).hexdigest()[:12]
             chunk["chunk_index"] = i
             chunk["source"] = source
 
@@ -89,6 +89,8 @@ class ChunkerAgent(BaseAgent):
 
     def _fixed_chunk(self, text: str, size: int, overlap: int) -> list[dict[str, Any]]:
         """Fixed-size chunks with overlap."""
+        if overlap >= size:
+            overlap = size // 2  # Prevent infinite loop
         chunks = []
         start = 0
         while start < len(text):

@@ -7,14 +7,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python deps
+# Install Python deps (production only, no dev deps)
 COPY pyproject.toml .
-RUN pip install --no-cache-dir -e ".[dev]" || pip install --no-cache-dir .
-
-# Copy source
 COPY src/ src/
-COPY scripts/ scripts/
-COPY .env.example .env
+RUN pip install --no-cache-dir .
+
+# Do NOT copy .env — secrets must be injected at runtime via env vars
 
 EXPOSE 8000
 

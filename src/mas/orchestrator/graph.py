@@ -31,26 +31,6 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
-def _build_initial_state(user_query: str, context: dict[str, Any] | None = None) -> PipelineState:
-    return PipelineState(
-        user_query=user_query,
-        user_context=context or {},
-        plan=[],
-        current_phase="planning",
-        pending_tasks=[],
-        active_tasks=[],
-        completed_task_ids=[],
-        results=[],
-        messages=[HumanMessage(content=user_query)],
-        task_ledger="",
-        progress_ledger="",
-        iteration=0,
-        max_iterations=3,
-        should_replan=False,
-        final_output={},
-    )
-
-
 def build_orchestrator_graph(
     orchestrator_llm: BaseChatModel,
     worker_llm: BaseChatModel,
@@ -133,7 +113,7 @@ def build_orchestrator_graph(
 
         return {
             "results": results,
-            "completed_task_ids": state["completed_task_ids"] + completed_ids,
+            "completed_task_ids": list(set(state["completed_task_ids"] + completed_ids)),
             "current_phase": "reviewing",
             "progress_ledger": state["progress_ledger"] + "\n" + progress,
             "iteration": state["iteration"] + 1,
@@ -192,7 +172,8 @@ def build_orchestrator_graph(
         logger.info("orchestrator.synthesizing")
 
         successful = [r for r in state["results"] if r.status == ResultStatus.SUCCESS]
-        outputs = {r.agent_type: r.output for r in successful}
+        # Key by task_id to avoid collision when multiple tasks use same agent_type
+        outputs = {r.task_id: {"agent_type": r.agent_type, "output": r.output} for r in successful}
 
         # Record pipeline metrics
         if monitor:

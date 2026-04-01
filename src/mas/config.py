@@ -28,7 +28,7 @@ class MemoryConfig(BaseSettings):
     chroma_persist_dir: Path = Path("./data/chroma")
     neo4j_uri: str = Field(default="bolt://localhost:7687", alias="NEO4J_URI")
     neo4j_user: str = Field(default="neo4j", alias="NEO4J_USER")
-    neo4j_password: str = Field(default="password", alias="NEO4J_PASSWORD")
+    neo4j_password: str = Field(default="", alias="NEO4J_PASSWORD")
     local_cache_ttl: int = 3600
     shared_collection: str = "mas_shared"
 
@@ -49,7 +49,7 @@ class ServerConfig(BaseSettings):
 
     host: str = "0.0.0.0"
     port: int = 8000
-    workers: int = 4
+    workers: int = 1  # Must be 1 — pipeline uses in-process state
 
 
 class MASConfig(BaseSettings):

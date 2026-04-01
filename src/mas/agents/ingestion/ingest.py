@@ -8,7 +8,7 @@ Modeled after RAG-Anything's pluggable parser architecture:
 
 from __future__ import annotations
 
-import hashlib
+import hashlib  # using sha256
 from pathlib import Path
 from typing import Any
 
@@ -38,58 +38,57 @@ def register_parser(extensions: list[str]):
 async def parse_pdf(path: Path) -> list[dict[str, Any]]:
     import fitz
 
-    doc = fitz.open(str(path))
     items: list[dict[str, Any]] = []
 
-    for page_num in range(len(doc)):
-        page = doc[page_num]
+    with fitz.open(str(path)) as doc:
+        for page_num in range(len(doc)):
+            page = doc[page_num]
 
-        text = page.get_text("text")
-        if text.strip():
-            items.append({
-                "type": "text",
-                "content": text,
-                "page_idx": page_num + 1,
-                "source": str(path),
-            })
+            text = page.get_text("text")
+            if text.strip():
+                items.append({
+                    "type": "text",
+                    "content": text,
+                    "page_idx": page_num + 1,
+                    "source": str(path),
+                })
 
-        tables = page.find_tables()
-        if tables and tables.tables:
-            for t_idx, table in enumerate(tables.tables):
+            tables = page.find_tables()
+            if tables and tables.tables:
+                for t_idx, table in enumerate(tables.tables):
+                    try:
+                        items.append({
+                            "type": "table",
+                            "content": table.extract(),
+                            "page_idx": page_num + 1,
+                            "table_index": t_idx,
+                            "source": str(path),
+                        })
+                    except Exception:
+                        pass
+
+            for img_idx, img in enumerate(page.get_images(full=True)):
+                xref = img[0]
                 try:
+                    pix = fitz.Pixmap(doc, xref)
+                    img_bytes = pix.tobytes("png")
                     items.append({
-                        "type": "table",
-                        "content": table.extract(),
+                        "type": "image",
+                        "content": img_bytes,
                         "page_idx": page_num + 1,
-                        "table_index": t_idx,
+                        "img_index": img_idx,
                         "source": str(path),
                     })
                 except Exception:
-                    pass
+                    items.append({
+                        "type": "image",
+                        "content": None,
+                        "page_idx": page_num + 1,
+                        "img_index": img_idx,
+                        "xref": xref,
+                        "source": str(path),
+                    })
 
-        for img_idx, img in enumerate(page.get_images(full=True)):
-            xref = img[0]
-            try:
-                pix = fitz.Pixmap(doc, xref)
-                img_bytes = pix.tobytes("png")
-                items.append({
-                    "type": "image",
-                    "content": img_bytes,
-                    "page_idx": page_num + 1,
-                    "img_index": img_idx,
-                    "source": str(path),
-                })
-            except Exception:
-                items.append({
-                    "type": "image",
-                    "content": None,
-                    "page_idx": page_num + 1,
-                    "img_index": img_idx,
-                    "xref": xref,
-                    "source": str(path),
-                })
-
-    doc.close()
     return items
 
 
@@ -182,7 +181,7 @@ class IngestionAgent(BaseAgent):
         else:
             items = await parser(path)
 
-        content_hash = hashlib.md5(path.read_bytes()).hexdigest()
+        content_hash = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
 
         return AgentResult(
             task_id=task.id,

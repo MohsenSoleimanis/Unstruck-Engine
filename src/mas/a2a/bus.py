@@ -10,7 +10,7 @@ Implements the horizontal communication layer from the A2A protocol spec:
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import Any
 
 import structlog
@@ -39,8 +39,8 @@ class MessageBus:
         self._type_index: dict[str, list[str]] = defaultdict(list)
         # agent_id → queue of pending messages
         self._queues: dict[str, asyncio.Queue[AgentMessage]] = {}
-        # Full message history for observability
-        self._history: list[AgentMessage] = []
+        # Bounded message history for observability
+        self._history: deque[AgentMessage] = deque(maxlen=10000)
 
     def register_agent(self, agent_id: str, agent_type: str) -> None:
         """Register an agent with the bus for message delivery."""
@@ -117,23 +117,39 @@ class MessageBus:
 
     async def request(self, message: AgentMessage, timeout: float = 30.0) -> AgentMessage | None:
         """
-        Send a message and wait for a reply (request/reply pattern).
+        Send a message and wait for a correlated reply (by task_id).
 
-        Waits for a message back to the sender with the same task_id.
+        Non-matching messages are buffered and re-queued.
         """
         await self.send(message)
 
-        # Wait for reply
         if message.sender not in self._queues:
             return None
 
         queue = self._queues[message.sender]
+        buffer: list[AgentMessage] = []
+        deadline = asyncio.get_event_loop().time() + timeout
+
         try:
-            reply = await asyncio.wait_for(queue.get(), timeout=timeout)
-            return reply
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:
+                    break
+                msg = await asyncio.wait_for(queue.get(), timeout=remaining)
+                if msg.task_id == message.task_id:
+                    # Re-queue buffered messages
+                    for buffered in buffer:
+                        await queue.put(buffered)
+                    return msg
+                buffer.append(msg)
         except asyncio.TimeoutError:
-            logger.warning("a2a.request_timeout", sender=message.sender, task_id=message.task_id)
-            return None
+            pass
+
+        # Re-queue all buffered messages on timeout
+        for buffered in buffer:
+            await queue.put(buffered)
+        logger.warning("a2a.request_timeout", sender=message.sender, task_id=message.task_id)
+        return None
 
     def get_agents(self) -> list[dict[str, str]]:
         """List all registered agents."""

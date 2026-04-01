@@ -7,6 +7,8 @@ from typing import Any
 import networkx as nx
 import structlog
 
+from mas.utils.security import safe_label
+
 logger = structlog.get_logger()
 
 
@@ -102,20 +104,22 @@ class KnowledgeGraph:
     # --- Neo4j sync helpers ---
 
     def _neo4j_add_entity(self, entity_id: str, entity_type: str, props: dict) -> None:
+        label = safe_label(entity_type)
         with self._neo4j_driver.session() as session:
             safe_props = {k: v for k, v in props.items() if isinstance(v, (str, int, float, bool))}
             session.run(
-                f"MERGE (n:{entity_type} {{id: $id}}) SET n += $props",
+                f"MERGE (n:{label} {{id: $id}}) SET n += $props",
                 id=entity_id,
                 props=safe_props,
             )
 
     def _neo4j_add_relationship(self, source: str, target: str, rel_type: str, props: dict) -> None:
+        rel_label = safe_label(rel_type)
         with self._neo4j_driver.session() as session:
             safe_props = {k: v for k, v in props.items() if isinstance(v, (str, int, float, bool))}
             session.run(
                 f"MATCH (a {{id: $src}}), (b {{id: $tgt}}) "
-                f"MERGE (a)-[r:{rel_type}]->(b) SET r += $props",
+                f"MERGE (a)-[r:{rel_label}]->(b) SET r += $props",
                 src=source,
                 tgt=target,
                 props=safe_props,

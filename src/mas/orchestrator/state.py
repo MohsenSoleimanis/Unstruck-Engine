@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, TypedDict
 
 from langgraph.graph import add_messages
 from langchain_core.messages import BaseMessage
@@ -24,20 +24,6 @@ def _merge_tasks(existing: list[Task], new: list[Task]) -> list[Task]:
     return list(by_id.values())
 
 
-class OrchestratorState:
-    """
-    TypedDict-style state for the LangGraph orchestrator.
-
-    Uses annotation-based reducers so LangGraph merges state correctly
-    when nodes run in parallel.
-    """
-    pass
-
-
-# LangGraph requires TypedDict, so we define it properly:
-from typing import TypedDict
-
-
 class PipelineState(TypedDict):
     """Full pipeline state flowing through the orchestrator graph."""
 
@@ -46,7 +32,7 @@ class PipelineState(TypedDict):
     user_context: dict[str, Any]
 
     # Planning
-    plan: list[Task]
+    plan: Annotated[list[Task], _merge_tasks]
     current_phase: str  # "planning" | "executing" | "reviewing" | "complete"
 
     # Execution

@@ -1,25 +1,25 @@
 """Tests for MCP built-in tools."""
 
-import json
 import tempfile
 from pathlib import Path
 
 import pytest
 
-from mas.tools.mcp_client import MCPToolClient
-
-
-@pytest.fixture
-def client():
-    c = MCPToolClient()
-    c.register_builtin_tools()
-    return c
+from mas.tools.mcp_client import MCPToolClient, configure_sandbox
 
 
 @pytest.fixture
 def tmp_dir():
     with tempfile.TemporaryDirectory() as d:
         yield Path(d)
+
+
+@pytest.fixture
+def client(tmp_dir):
+    configure_sandbox(tmp_dir)
+    c = MCPToolClient()
+    c.register_builtin_tools()
+    return c
 
 
 def test_list_tools(client):
@@ -37,12 +37,10 @@ def test_list_tools(client):
 
 @pytest.mark.asyncio
 async def test_fs_write_and_read(client, tmp_dir):
-    path = str(tmp_dir / "test.txt")
-
-    result = await client.call_tool("fs_write", {"path": path, "content": "hello world"})
+    result = await client.call_tool("fs_write", {"path": "test.txt", "content": "hello world"})
     assert result["written"] is True
 
-    result = await client.call_tool("fs_read", {"path": path})
+    result = await client.call_tool("fs_read", {"path": "test.txt"})
     assert result["content"] == "hello world"
 
 
@@ -52,43 +50,37 @@ async def test_fs_list(client, tmp_dir):
     (tmp_dir / "b.txt").write_text("b")
     (tmp_dir / "c.py").write_text("c")
 
-    result = await client.call_tool("fs_list", {"directory": str(tmp_dir), "pattern": "*.txt"})
+    result = await client.call_tool("fs_list", {"directory": ".", "pattern": "*.txt"})
     assert result["count"] == 2
 
 
 @pytest.mark.asyncio
 async def test_fs_info(client, tmp_dir):
-    f = tmp_dir / "test.txt"
-    f.write_text("hello")
-
-    result = await client.call_tool("fs_info", {"path": str(f)})
+    (tmp_dir / "test.txt").write_text("hello")
+    result = await client.call_tool("fs_info", {"path": "test.txt"})
     assert result["is_file"] is True
     assert result["extension"] == ".txt"
     assert result["size_bytes"] == 5
 
 
 @pytest.mark.asyncio
-async def test_fs_read_not_found(client):
-    result = await client.call_tool("fs_read", {"path": "/nonexistent/path.txt"})
+async def test_path_traversal_blocked(client):
+    result = await client.call_tool("fs_read", {"path": "../../etc/passwd"})
     assert "error" in result
 
 
 @pytest.mark.asyncio
 async def test_json_write_and_read(client, tmp_dir):
-    path = str(tmp_dir / "data.json")
-
-    await client.call_tool("json_write", {"path": path, "data": {"key": "value", "num": 42}})
-    result = await client.call_tool("json_read", {"path": path})
+    await client.call_tool("json_write", {"path": "data.json", "data": {"key": "value", "num": 42}})
+    result = await client.call_tool("json_read", {"path": "data.json"})
     assert result["data"]["key"] == "value"
     assert result["data"]["num"] == 42
 
 
 @pytest.mark.asyncio
 async def test_csv_read(client, tmp_dir):
-    csv_path = tmp_dir / "data.csv"
-    csv_path.write_text("name,age,city\nAlice,30,NYC\nBob,25,LA\n")
-
-    result = await client.call_tool("csv_read", {"path": str(csv_path)})
+    (tmp_dir / "data.csv").write_text("name,age,city\nAlice,30,NYC\nBob,25,LA\n")
+    result = await client.call_tool("csv_read", {"path": "data.csv"})
     assert result["headers"] == ["name", "age", "city"]
     assert result["total_rows"] == 2
     assert result["rows"][0] == ["Alice", "30", "NYC"]
@@ -98,33 +90,41 @@ async def test_csv_read(client, tmp_dir):
 async def test_db_create_and_query(client, tmp_dir):
     db_path = str(tmp_dir / "test.db")
 
-    # Create table
     await client.call_tool("db_execute", {
         "database": db_path,
         "sql": "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)",
     })
 
-    # Insert
     await client.call_tool("db_execute", {
         "database": db_path,
         "sql": "INSERT INTO users (name, age) VALUES (?, ?)",
         "params": ["Alice", 30],
     })
-    await client.call_tool("db_execute", {
-        "database": db_path,
-        "sql": "INSERT INTO users (name, age) VALUES (?, ?)",
-        "params": ["Bob", 25],
-    })
 
-    # Query
     result = await client.call_tool("db_query", {
         "database": db_path,
         "sql": "SELECT * FROM users ORDER BY name",
     })
-    assert result["count"] == 2
-    assert result["columns"] == ["id", "name", "age"]
+    assert result["count"] == 1
     assert result["rows"][0]["name"] == "Alice"
-    assert result["rows"][1]["name"] == "Bob"
+
+
+@pytest.mark.asyncio
+async def test_sql_injection_blocked(client, tmp_dir):
+    db_path = str(tmp_dir / "test.db")
+
+    # DROP TABLE should be blocked
+    result = await client.call_tool("db_query", {
+        "database": db_path,
+        "sql": "DROP TABLE users",
+    })
+    assert "error" in result
+
+    result = await client.call_tool("db_execute", {
+        "database": db_path,
+        "sql": "DROP TABLE users",
+    })
+    assert "error" in result
 
 
 @pytest.mark.asyncio

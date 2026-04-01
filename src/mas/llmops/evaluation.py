@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +26,7 @@ class EvaluationEngine:
     """
 
     def __init__(self) -> None:
-        self._evaluations: list[dict[str, Any]] = []
+        self._evaluations: deque[dict[str, Any]] = deque(maxlen=5000)
 
     def evaluate_result(
         self,
@@ -38,7 +39,7 @@ class EvaluationEngine:
         eval_result = {
             "task_id": task_id,
             "agent_type": agent_type,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "metrics": {},
         }
 

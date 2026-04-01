@@ -59,7 +59,7 @@ class ContentSeparatorAgent(BaseAgent):
             agent_type=self.agent_type,
             status=ResultStatus.SUCCESS,
             output={
-                "streams": {k: v for k, v in streams.items()},
+                "streams": dict(streams),
                 "text_aggregate": text_aggregate[:50000],
                 "modalities_found": list(streams.keys()),
                 "counts": {k: len(v) for k, v in streams.items()},
