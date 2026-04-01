@@ -104,20 +104,25 @@ class Planner:
         try:
             items = extract_json(raw)
             tasks = []
+            raw_deps: list[list] = []
+
             for i, item in enumerate(items):
+                # Store raw dependencies separately — they may be ints (index-based)
+                # that need resolution after all tasks are created
+                raw_deps.append(item.get("dependencies", []))
                 task = Task(
                     agent_type=item["agent_type"],
                     instruction=item["instruction"],
                     context=item.get("context", {}),
-                    dependencies=item.get("dependencies", []),
+                    dependencies=[],  # Filled in below after all tasks exist
                     priority=TaskPriority(item.get("priority", "medium")),
                 )
                 tasks.append(task)
 
             # Resolve dependency references (index-based to ID-based)
-            for task in tasks:
+            for task, deps in zip(tasks, raw_deps):
                 resolved = []
-                for dep in task.dependencies:
+                for dep in deps:
                     if isinstance(dep, int) and 0 <= dep < len(tasks):
                         resolved.append(tasks[dep].id)
                     elif isinstance(dep, str):
