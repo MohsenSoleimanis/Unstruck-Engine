@@ -59,9 +59,12 @@ class Planner:
     def __init__(self, llm: BaseChatModel, registry: AgentRegistry) -> None:
         self.llm = llm
         self.registry = registry
+        self._user_context: dict[str, Any] = {}
 
     async def plan(self, user_query: str, context: dict[str, Any] | None = None) -> list[Task]:
         """Generate a task plan from a user query."""
+        self._user_context = context or {}
+
         agent_list = "\n".join(
             f"  - {a['agent_type']}: {a['description']}" for a in self.registry.list_agents()
         )
@@ -69,7 +72,7 @@ class Planner:
         system_msg = SystemMessage(content=PLANNER_SYSTEM_PROMPT.format(agent_list=agent_list))
         user_content = f"User request: {user_query}"
         if context:
-            user_content += f"\n\nAdditional context: {json.dumps(context, default=str)}"
+            user_content += f"\n\nAdditional context (pass this to agents): {json.dumps(context, default=str)}"
 
         response = await self.llm.ainvoke([system_msg, HumanMessage(content=user_content)])
         return self._parse_plan(response.content)
@@ -110,10 +113,15 @@ class Planner:
                 # Store raw dependencies separately — they may be ints (index-based)
                 # that need resolution after all tasks are created
                 raw_deps.append(item.get("dependencies", []))
+
+                # Merge user context (file_path, etc.) into every task's context
+                # so agents like ingestion can find the uploaded file
+                task_context = {**self._user_context, **item.get("context", {})}
+
                 task = Task(
                     agent_type=item["agent_type"],
                     instruction=item["instruction"],
-                    context=item.get("context", {}),
+                    context=task_context,
                     dependencies=[],  # Filled in below after all tasks exist
                     priority=TaskPriority(item.get("priority", "medium")),
                 )

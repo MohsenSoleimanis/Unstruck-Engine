@@ -6,19 +6,32 @@ import { useConversationStore } from "@/stores/conversation-store";
 import { useAgentStore } from "@/stores/agent-store";
 import { useStreamStore } from "@/stores/stream-store";
 import { useUIStore } from "@/stores/ui-store";
+import { uploadFile } from "@/lib/api";
 import { startQueryStream } from "@/lib/sse";
 import type { CostSummary, StreamEvent } from "@/lib/types";
 
 export function ChatArea() {
-  const { messages, activeId, createConversation, addMessage, appendAssistantMessage, updateLastAssistantMessage } = useConversationStore();
+  const { messages, activeId, createConversation, addMessage, appendAssistantMessage } = useConversationStore();
   const { startRun, endRun, setPhase, addEvent } = useAgentStore();
   const { setStreaming, setCost, setError } = useStreamStore();
   const { toggleSidebar, toggleRightPanel, sidebarOpen, rightPanelOpen } = useUIStore();
 
-  const handleSend = useCallback(async (text: string) => {
+  const handleSend = useCallback(async (text: string, files?: File[]) => {
     let convId = activeId;
     if (!convId) {
       convId = await createConversation();
+    }
+
+    // Upload files first, collect paths
+    const context: Record<string, unknown> = {};
+    if (files && files.length > 0) {
+      const uploaded = await Promise.all(files.map((f) => uploadFile(f)));
+      // Single file → file_path, multiple → file_paths
+      if (uploaded.length === 1) {
+        context.file_path = `data/uploads/${uploaded[0].name}`;
+      } else {
+        context.file_paths = uploaded.map((u) => `data/uploads/${u.name}`);
+      }
     }
 
     await addMessage("user", text);
@@ -26,7 +39,7 @@ export function ChatArea() {
 
     const abort = startQueryStream(
       text,
-      {},
+      context,
       3,
       (event: StreamEvent) => {
         switch (event.event) {
@@ -73,7 +86,6 @@ export function ChatArea() {
 
   return (
     <main className="flex flex-1 flex-col overflow-hidden">
-      {/* Top bar */}
       <header className="flex h-12 items-center justify-between border-b border-border px-4">
         <button onClick={toggleSidebar} className="rounded-lg p-1.5 text-muted-foreground hover:bg-accent">
           <PanelLeftOpen size={18} className={sidebarOpen ? "opacity-50" : ""} />
