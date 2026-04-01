@@ -10,9 +10,9 @@ from pydantic_settings import BaseSettings
 
 
 class LLMConfig(BaseSettings):
-    model_config = {"env_prefix": "MAS_"}
+    model_config = {"env_prefix": "MAS_", "env_file": ".env", "extra": "ignore"}
 
-    orchestrator_model: str = "claude-sonnet-4-20250514"
+    orchestrator_model: str = "gpt-4o"
     worker_model: str = "gpt-4o-mini"
     vision_model: str = "gpt-4o"
     embedding_model: str = "text-embedding-3-small"
@@ -23,7 +23,7 @@ class LLMConfig(BaseSettings):
 
 
 class MemoryConfig(BaseSettings):
-    model_config = {"env_prefix": "MAS_MEMORY_"}
+    model_config = {"env_prefix": "MAS_MEMORY_", "extra": "ignore"}
 
     chroma_persist_dir: Path = Path("./data/chroma")
     neo4j_uri: str = Field(default="bolt://localhost:7687", alias="NEO4J_URI")
@@ -34,7 +34,7 @@ class MemoryConfig(BaseSettings):
 
 
 class LLMOpsConfig(BaseSettings):
-    model_config = {"env_prefix": "MAS_"}
+    model_config = {"env_prefix": "MAS_", "extra": "ignore"}
 
     enable_tracing: bool = True
     enable_cost_tracking: bool = True
@@ -45,17 +45,17 @@ class LLMOpsConfig(BaseSettings):
 
 
 class ServerConfig(BaseSettings):
-    model_config = {"env_prefix": "MAS_"}
+    model_config = {"env_prefix": "MAS_", "extra": "ignore"}
 
     host: str = "0.0.0.0"
     port: int = 8000
-    workers: int = 1  # Must be 1 — pipeline uses in-process state
+    workers: int = 1
 
 
 class MASConfig(BaseSettings):
     """Root configuration — aggregates all sub-configs."""
 
-    model_config = {"env_prefix": "MAS_", "env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_prefix": "MAS_", "env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     project_name: str = "multi-agent-system"
     data_dir: Path = Path("./data")

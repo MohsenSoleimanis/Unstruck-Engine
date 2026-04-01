@@ -22,9 +22,13 @@ logger = structlog.get_logger()
 async def lifespan(app: FastAPI):
     """Initialize pipeline and storage at startup."""
     config = get_config()
-    app.state.pipeline = MASPipeline(config=config)
+    try:
+        app.state.pipeline = MASPipeline(config=config)
+        logger.info("server.started", agents=len(app.state.pipeline.registry.list_agents()))
+    except Exception as e:
+        logger.error("server.pipeline_init_failed", error=str(e))
+        app.state.pipeline = None
     app.state.conversation_store = ConversationStore(config.data_dir / "conversations")
-    logger.info("server.started", agents=len(app.state.pipeline.registry.list_agents()))
     yield
 
 
