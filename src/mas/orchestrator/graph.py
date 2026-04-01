@@ -112,9 +112,15 @@ def build_orchestrator_graph(
         ingested_docs = session_data.get("ingested_docs", {})
         file_path = context.get("file_path", "")
         if file_path and file_path in ingested_docs:
+            # Same file being re-sent
             context["already_ingested"] = True
             context["doc_id"] = ingested_docs[file_path]
             logger.info("orchestrator.skip_ingestion", file_path=file_path)
+        elif ingested_docs and not file_path:
+            # Follow-up question — no file attached but session has documents
+            context["already_ingested"] = True
+            context["doc_id"] = list(ingested_docs.values())[0]
+            logger.info("orchestrator.follow_up_detected", docs=list(ingested_docs.keys()))
 
         # Conversation history for context
         history = session_data.get("message_history", [])
