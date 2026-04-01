@@ -11,6 +11,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from mas.agents.registry import AgentRegistry
 from mas.schemas.tasks import Task, TaskPriority
+from mas.utils.parsing import extract_json
 
 logger = structlog.get_logger()
 
@@ -101,15 +102,7 @@ class Planner:
     def _parse_plan(self, raw: str) -> list[Task]:
         """Parse LLM output into Task objects."""
         try:
-            # Extract JSON from potential markdown fences
-            text = raw.strip()
-            if "```" in text:
-                text = text.split("```")[1]
-                if text.startswith("json"):
-                    text = text[4:]
-                text = text.strip()
-
-            items = json.loads(text)
+            items = extract_json(raw)
             tasks = []
             for i, item in enumerate(items):
                 task = Task(

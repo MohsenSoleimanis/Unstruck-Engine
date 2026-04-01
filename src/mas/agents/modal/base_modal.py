@@ -7,7 +7,6 @@ Output always feeds into the knowledge graph.
 
 from __future__ import annotations
 
-import json
 from abc import abstractmethod
 from typing import Any
 
@@ -16,6 +15,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from mas.agents.base import BaseAgent
 from mas.schemas.results import AgentResult, ResultStatus
 from mas.schemas.tasks import Task
+from mas.utils.parsing import extract_json
 
 
 class BaseModalProcessor(BaseAgent):
@@ -53,8 +53,7 @@ class BaseModalProcessor(BaseAgent):
             )
 
         processed = []
-        all_entities = []
-        total_tokens: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
+        all_entities: list[dict[str, Any]] = []
 
         for item in items:
             try:
@@ -87,11 +86,10 @@ class BaseModalProcessor(BaseAgent):
                 "total_processed": len(processed),
                 "total_entities": len(all_entities),
             },
-            token_usage=total_tokens,
         )
 
     async def _llm_call(self, system: str, user: str) -> str:
-        """Helper for LLM calls with JSON extraction."""
+        """Helper for LLM calls."""
         response = await self.llm.ainvoke([
             SystemMessage(content=system),
             HumanMessage(content=user),
@@ -99,11 +97,5 @@ class BaseModalProcessor(BaseAgent):
         return response.content
 
     def _parse_json(self, raw: str) -> Any:
-        """Robust JSON parsing with fence stripping."""
-        text = raw.strip()
-        if "```" in text:
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
-            text = text.strip()
-        return json.loads(text)
+        """Parse JSON from LLM output. Delegates to shared utility."""
+        return extract_json(raw)

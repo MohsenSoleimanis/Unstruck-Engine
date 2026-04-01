@@ -6,12 +6,16 @@ RAG-Anything pattern: encode to base64, send to VLM, extract entities.
 from __future__ import annotations
 
 import base64
+import json
 from typing import Any
 
+import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from mas.agents.modal.base_modal import BaseModalProcessor
 from mas.agents.registry import registry
+
+logger = structlog.get_logger()
 
 IMAGE_DESCRIPTION_PROMPT = """Analyze this image comprehensively. Describe:
 1. What is shown (diagram, chart, photo, figure, screenshot, etc.)
@@ -82,10 +86,10 @@ class ImageProcessor(BaseModalProcessor):
         try:
             data = self._parse_json(raw)
             entities = data.get("entities", [])
-            # Tag entities with source modality
             for e in entities:
                 e["source_modality"] = "image"
                 e["page_idx"] = item.get("page_idx")
             return entities
-        except Exception:
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            logger.warning("image_processor.entity_parse_failed", error=str(exc))
             return []

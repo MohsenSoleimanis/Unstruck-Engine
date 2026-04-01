@@ -65,7 +65,9 @@ class EmbedderAgent(BaseAgent):
             })
 
         # Store in shared memory (ChromaDB)
+        status = ResultStatus.SUCCESS
         indexed = 0
+        storage_error = None
         try:
             import chromadb
 
@@ -84,18 +86,24 @@ class EmbedderAgent(BaseAgent):
                 indexed = len(batch_ids)
 
         except Exception as e:
-            logger.warning("embedder.storage_fallback", error=str(e))
-            indexed = len(all_items)  # Count as indexed even without persistence
+            logger.warning("embedder.storage_failed", error=str(e))
+            status = ResultStatus.PARTIAL
+            storage_error = str(e)
+
+        output: dict[str, Any] = {
+            "indexed": indexed,
+            "total_items": len(all_items),
+            "collection": collection_name,
+            "text_chunks": len(chunks),
+            "modal_descriptions": len(modal_descriptions),
+        }
+        if storage_error:
+            output["storage_error"] = storage_error
 
         return AgentResult(
             task_id=task.id,
             agent_id=self.agent_id,
             agent_type=self.agent_type,
-            status=ResultStatus.SUCCESS,
-            output={
-                "indexed": indexed,
-                "collection": collection_name,
-                "text_chunks": len(chunks),
-                "modal_descriptions": len(modal_descriptions),
-            },
+            status=status,
+            output=output,
         )

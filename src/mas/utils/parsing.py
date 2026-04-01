@@ -1,4 +1,4 @@
-"""Shared JSON extraction utility — eliminates DRY violation across 7+ agents."""
+"""Shared LLM output parsing utilities — eliminates DRY violations across agents."""
 
 from __future__ import annotations
 
@@ -32,3 +32,19 @@ def extract_json(raw: str) -> Any:
         return json.loads(match.group(1).strip())
 
     raise json.JSONDecodeError("No valid JSON found in LLM output", text, 0)
+
+
+def extract_token_usage(response: Any) -> dict[str, int]:
+    """
+    Extract token usage from a LangChain LLM response.
+
+    Returns a dict with input_tokens and output_tokens, or empty dict
+    if usage metadata is not available.
+    """
+    metadata = getattr(response, "usage_metadata", None)
+    if not metadata:
+        return {}
+    return {
+        "input_tokens": metadata.get("input_tokens", 0),
+        "output_tokens": metadata.get("output_tokens", 0),
+    }

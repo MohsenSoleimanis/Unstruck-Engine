@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import json
-import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage
 from langgraph.graph import END, StateGraph
 
 from mas.agents.registry import AgentRegistry
@@ -20,10 +18,8 @@ from mas.memory.shared import SharedMemory
 from mas.orchestrator.planner import Planner
 from mas.orchestrator.router import Router
 from mas.orchestrator.state import PipelineState
-from mas.schemas.results import AgentResult, ResultStatus
-from mas.schemas.tasks import Task, TaskStatus
+from mas.schemas.results import ResultStatus
 
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mas.a2a.bus import MessageBus
     from mas.tools.mcp_client import MCPToolClient
@@ -123,13 +119,11 @@ def build_orchestrator_graph(
     async def review_node(state: PipelineState) -> dict[str, Any]:
         logger.info("orchestrator.reviewing", iteration=state["iteration"])
 
-        total = len(state["plan"])
-        completed = len(state["completed_task_ids"])
-        failed = [r for r in state["results"] if r.status == ResultStatus.FAILED]
+        has_failures = any(r.status == ResultStatus.FAILED for r in state["results"])
 
         # Decide if we need to replan
         should_replan = (
-            len(failed) > 0
+            has_failures
             and state["iteration"] < state["max_iterations"]
         )
 

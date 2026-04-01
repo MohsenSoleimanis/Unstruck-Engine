@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -11,6 +10,7 @@ from mas.agents.base import BaseAgent
 from mas.agents.registry import registry
 from mas.schemas.results import AgentResult, ResultStatus
 from mas.schemas.tasks import Task
+from mas.utils.parsing import extract_json, extract_token_usage
 
 SYNTHESIS_PROMPT = """Combine these agent outputs into a single coherent answer.
 
@@ -61,22 +61,9 @@ class SynthesizerAgent(BaseAgent):
         ])
 
         try:
-            raw = response.content
-            if "```" in raw:
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-                raw = raw.strip()
-            output = json.loads(raw)
-        except (json.JSONDecodeError, IndexError):
+            output = extract_json(response.content)
+        except json.JSONDecodeError:
             output = {"answer": response.content}
-
-        token_usage = {}
-        if hasattr(response, "usage_metadata") and response.usage_metadata:
-            token_usage = {
-                "input_tokens": response.usage_metadata.get("input_tokens", 0),
-                "output_tokens": response.usage_metadata.get("output_tokens", 0),
-            }
 
         return AgentResult(
             task_id=task.id,
@@ -84,5 +71,5 @@ class SynthesizerAgent(BaseAgent):
             agent_type=self.agent_type,
             status=ResultStatus.SUCCESS,
             output=output,
-            token_usage=token_usage,
+            token_usage=extract_token_usage(response),
         )

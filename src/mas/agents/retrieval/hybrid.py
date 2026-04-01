@@ -1,6 +1,6 @@
 """Hybrid retriever agent — combines vector search + graph traversal + reranking.
 
-The core RAG query path: vector similarity → graph expansion → LLM rerank.
+The core RAG query path: vector similarity -> graph expansion -> LLM rerank.
 """
 
 from __future__ import annotations
@@ -8,12 +8,14 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from mas.agents.base import BaseAgent
 from mas.agents.registry import registry
 from mas.schemas.results import AgentResult, ResultStatus
 from mas.schemas.tasks import Task
+from mas.utils.parsing import extract_json
 
 RERANK_PROMPT = """Score each document's relevance to the query (0-10).
 
@@ -72,7 +74,6 @@ class HybridRetrieverAgent(BaseAgent):
         # Stage 3: LLM reranking
         reranked = await self._rerank(query, candidates, top_k)
 
-        token_usage = {}
         return AgentResult(
             task_id=task.id,
             agent_id=self.agent_id,
@@ -84,7 +85,6 @@ class HybridRetrieverAgent(BaseAgent):
                 "vector_hits": len(vector_results),
                 "graph_hits": len(graph_results),
             },
-            token_usage=token_usage,
         )
 
     def _vector_search(self, query: str, collection: str, n: int) -> list[dict[str, Any]]:
@@ -106,7 +106,8 @@ class HybridRetrieverAgent(BaseAgent):
                     "source": "vector",
                 })
             return hits
-        except Exception:
+        except Exception as exc:
+            structlog.get_logger().warning("hybrid_retriever.vector_search_failed", error=str(exc))
             return []
 
     def _graph_expand(self, query: str, nodes: list[dict], edges: list[dict]) -> list[dict[str, Any]]:
@@ -141,14 +142,7 @@ class HybridRetrieverAgent(BaseAgent):
                 HumanMessage(content=RERANK_PROMPT.format(query=query, documents=docs_text)),
             ])
 
-            raw = response.content.strip()
-            if "```" in raw:
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-                raw = raw.strip()
-
-            rankings = json.loads(raw)
+            rankings = extract_json(response.content)
             reranked = []
             for r in sorted(rankings, key=lambda x: x.get("score", 0), reverse=True)[:top_k]:
                 idx = r["index"]
@@ -157,5 +151,6 @@ class HybridRetrieverAgent(BaseAgent):
                     reranked.append(candidates[idx])
             return reranked
 
-        except Exception:
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            structlog.get_logger().warning("hybrid_retriever.rerank_failed", error=str(exc))
             return candidates[:top_k]

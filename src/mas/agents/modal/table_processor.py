@@ -5,10 +5,15 @@ RAG-Anything pattern: analyze table structure, extract semantics, build entities
 
 from __future__ import annotations
 
+import json
 from typing import Any
+
+import structlog
 
 from mas.agents.modal.base_modal import BaseModalProcessor
 from mas.agents.registry import registry
+
+logger = structlog.get_logger()
 
 TABLE_DESCRIPTION_PROMPT = """Analyze this table data. Provide:
 1. What this table represents (subject, purpose)
@@ -77,7 +82,8 @@ class TableProcessor(BaseModalProcessor):
                 e["source_modality"] = "table"
                 e["page_idx"] = item.get("page_idx")
             return entities
-        except Exception:
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            logger.warning("table_processor.entity_parse_failed", error=str(exc))
             return []
 
     def _format_table(self, data: Any) -> str:

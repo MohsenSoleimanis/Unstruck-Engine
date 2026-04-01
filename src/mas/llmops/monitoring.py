@@ -66,7 +66,7 @@ class HealthMonitor:
         return {
             "status": "healthy" if healthy_agents == total_agents else "degraded",
             "agents": {"total": total_agents, "healthy": healthy_agents},
-            "recent_alerts": self._alerts[-10:],
+            "recent_alerts": list(self._alerts)[-10:],
             "pipeline_runs": len(self._pipeline_metrics),
         }
 

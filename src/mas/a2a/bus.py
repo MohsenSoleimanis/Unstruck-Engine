@@ -128,11 +128,12 @@ class MessageBus:
 
         queue = self._queues[message.sender]
         buffer: list[AgentMessage] = []
-        deadline = asyncio.get_event_loop().time() + timeout
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
 
         try:
             while True:
-                remaining = deadline - asyncio.get_event_loop().time()
+                remaining = deadline - loop.time()
                 if remaining <= 0:
                     break
                 msg = await asyncio.wait_for(queue.get(), timeout=remaining)

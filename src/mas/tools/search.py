@@ -34,7 +34,7 @@ class SearchTool:
 
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
-        except Exception:
+        except OSError:
             return []
 
         query_lower = query.lower()

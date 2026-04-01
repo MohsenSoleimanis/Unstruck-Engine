@@ -78,17 +78,20 @@ class MCPToolClient:
         self._tools[name] = {"description": description, "handler": handler}
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
-        """Call a registered tool by name."""
+        """Call a registered tool by name (supports both sync and async handlers)."""
+        import inspect
+
         if name not in self._tools:
             raise ValueError(f"Tool '{name}' not found. Available: {list(self._tools.keys())}")
 
         handler = self._tools[name]["handler"]
-        if callable(handler):
-            result = handler(**arguments)
-            if hasattr(result, "__await__"):
-                result = await result
-            return result
-        raise TypeError(f"Tool handler for '{name}' is not callable")
+        if not callable(handler):
+            raise TypeError(f"Tool handler for '{name}' is not callable")
+
+        result = handler(**arguments)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
 
     def list_tools(self) -> list[dict[str, str]]:
         """List all available tools (for agent discovery)."""
@@ -189,13 +192,13 @@ def _fs_info(path: str) -> dict[str, Any]:
 # ═══════════════════════════════════════════════════════════
 
 
-def _http_get(url: str, headers: dict | None = None, timeout: int = 30) -> dict[str, Any]:
-    """Make an HTTP GET request."""
+async def _http_get(url: str, headers: dict | None = None, timeout: int = 30) -> dict[str, Any]:
+    """Make an HTTP GET request (async to avoid blocking the event loop)."""
     try:
         import httpx
 
-        with httpx.Client(timeout=timeout) as client:
-            response = client.get(url, headers=headers or {})
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(url, headers=headers or {})
             return {
                 "status_code": response.status_code,
                 "headers": dict(response.headers),
@@ -206,13 +209,13 @@ def _http_get(url: str, headers: dict | None = None, timeout: int = 30) -> dict[
         return {"error": str(e)}
 
 
-def _http_post(url: str, body: dict | None = None, headers: dict | None = None, timeout: int = 30) -> dict[str, Any]:
-    """Make an HTTP POST request with JSON body."""
+async def _http_post(url: str, body: dict | None = None, headers: dict | None = None, timeout: int = 30) -> dict[str, Any]:
+    """Make an HTTP POST request with JSON body (async to avoid blocking the event loop)."""
     try:
         import httpx
 
-        with httpx.Client(timeout=timeout) as client:
-            response = client.post(url, json=body or {}, headers=headers or {})
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(url, json=body or {}, headers=headers or {})
             return {
                 "status_code": response.status_code,
                 "headers": dict(response.headers),

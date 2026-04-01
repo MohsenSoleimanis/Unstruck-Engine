@@ -6,6 +6,7 @@ from typing import Any
 
 import structlog
 from langchain_anthropic import ChatAnthropic
+from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
 from mas.a2a.bus import MessageBus
@@ -105,7 +106,7 @@ class MASPipeline:
             mcp_tools=len(self.mcp_client.list_tools()),
         )
 
-    def _create_llm(self, model: str):
+    def _create_llm(self, model: str) -> BaseChatModel:
         """Create an LLM instance based on model name."""
         if "claude" in model or "anthropic" in model:
             return ChatAnthropic(

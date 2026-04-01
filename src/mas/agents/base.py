@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -93,8 +94,6 @@ class BaseAgent(ABC):
 
             # Store result in shared memory so other agents can access it
             if self.shared_memory and result.status == ResultStatus.SUCCESS:
-                import json
-
                 self.shared_memory.store_result(
                     task_id=task.id,
                     agent_type=self.agent_type,

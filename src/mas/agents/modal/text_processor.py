@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
+
+import structlog
 
 from mas.agents.modal.base_modal import BaseModalProcessor
 from mas.agents.registry import registry
+
+logger = structlog.get_logger()
 
 TEXT_ENTITY_PROMPT = """Extract all entities and relationships from this text.
 
@@ -60,5 +65,6 @@ class TextProcessor(BaseModalProcessor):
                 e["source_modality"] = "text"
                 e["page_idx"] = item.get("page_idx")
             return entities
-        except Exception:
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            logger.warning("text_processor.entity_parse_failed", error=str(exc))
             return []

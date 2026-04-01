@@ -60,9 +60,10 @@ class A2AProtocol:
 
     def find_by_skill(self, skill: str) -> list[AgentCard]:
         """Find agents that have a specific skill."""
+        skill_lower = skill.lower()
         return [
             c for c in self._cards.values()
-            if skill.lower() in [s.lower() for s in c.skills] and c.status == "available"
+            if c.status == "available" and skill_lower in {s.lower() for s in c.skills}
         ]
 
     def find_by_input_type(self, input_type: str) -> list[AgentCard]:

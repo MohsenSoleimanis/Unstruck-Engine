@@ -113,7 +113,7 @@ async def query(request: QueryRequest):
             cost=pipeline.cost_tracker.get_summary(),
             duration_ms=duration_ms,
         )
-    except Exception as e:
+    except Exception:
         logger.exception("query.failed", query=request.query[:100])
         raise HTTPException(status_code=500, detail="Internal server error. Check server logs.")
 
@@ -149,7 +149,7 @@ async def query_file(query: str, file: UploadFile = File(...)):
             "cost": pipeline.cost_tracker.get_summary(),
             "duration_ms": duration_ms,
         }
-    except Exception as e:
+    except Exception:
         logger.exception("query_file.failed", query=query[:100], file=safe_name)
         raise HTTPException(status_code=500, detail="Internal server error. Check server logs.")
 

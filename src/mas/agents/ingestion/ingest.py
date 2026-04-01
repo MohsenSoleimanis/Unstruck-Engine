@@ -8,7 +8,8 @@ Modeled after RAG-Anything's pluggable parser architecture:
 
 from __future__ import annotations
 
-import hashlib  # using sha256
+import hashlib
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -64,8 +65,8 @@ async def parse_pdf(path: Path) -> list[dict[str, Any]]:
                             "table_index": t_idx,
                             "source": str(path),
                         })
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("ingest.table_extract_failed", page=page_num + 1, table=t_idx, error=str(e))
 
             for img_idx, img in enumerate(page.get_images(full=True)):
                 xref = img[0]
@@ -79,7 +80,8 @@ async def parse_pdf(path: Path) -> list[dict[str, Any]]:
                         "img_index": img_idx,
                         "source": str(path),
                     })
-                except Exception:
+                except Exception as e:
+                    logger.debug("ingest.image_extract_failed", page=page_num + 1, img=img_idx, error=str(e))
                     items.append({
                         "type": "image",
                         "content": None,
@@ -213,11 +215,7 @@ class IngestionAgent(BaseAgent):
         return safe
 
     def _count_types(self, items: list[dict]) -> dict[str, int]:
-        counts: dict[str, int] = {}
-        for item in items:
-            t = item.get("type", "unknown")
-            counts[t] = counts.get(t, 0) + 1
-        return counts
+        return dict(Counter(item.get("type", "unknown") for item in items))
 
     def _fail(self, task: Task, msg: str) -> AgentResult:
         return AgentResult(

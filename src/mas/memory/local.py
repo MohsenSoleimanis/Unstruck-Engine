@@ -33,7 +33,13 @@ class LocalMemory:
         return value
 
     def has(self, key: str) -> bool:
-        return self.get(key) is not None
+        if key not in self._store:
+            return False
+        _, expires_at = self._store[key]
+        if time.time() > expires_at:
+            del self._store[key]
+            return False
+        return True
 
     def delete(self, key: str) -> None:
         self._store.pop(key, None)

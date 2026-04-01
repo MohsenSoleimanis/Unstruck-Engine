@@ -80,4 +80,4 @@ class EvaluationEngine:
 
     def export(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"summary": self.get_summary(), "evaluations": self._evaluations}, indent=2))
+        path.write_text(json.dumps({"summary": self.get_summary(), "evaluations": list(self._evaluations)}, indent=2))
