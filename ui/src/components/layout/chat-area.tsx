@@ -62,7 +62,23 @@ export function ChatArea() {
             break;
           case "done": {
             const output = event.data.output as Record<string, unknown>;
-            const answer = JSON.stringify(output.results ?? output, null, 2);
+            // Extract actual answer from analysis, rag_response, or synthesis
+            const analysis = output.analysis as Record<string, unknown> | null;
+            const ragResponse = output.rag_response as string;
+            const synthesis = output.synthesis as Record<string, unknown>;
+
+            let answer = "";
+            if (analysis?.answer) {
+              const raw = analysis.answer;
+              answer = typeof raw === "string" ? raw : JSON.stringify(raw, null, 2);
+            } else if (ragResponse) {
+              answer = ragResponse;
+            } else if (synthesis && Object.keys(synthesis).length > 0) {
+              answer = typeof synthesis.answer === "string" ? synthesis.answer : JSON.stringify(synthesis, null, 2);
+            } else {
+              answer = JSON.stringify(output.results ?? output, null, 2);
+            }
+
             appendAssistantMessage(answer, {
               cost_usd: (event.data.cost as CostSummary)?.session?.total_cost_usd,
               duration_ms: event.data.duration_ms as number,
@@ -73,12 +89,14 @@ export function ChatArea() {
           }
           case "error":
             setError(event.data.message as string);
+            appendAssistantMessage(`Error: ${event.data.message as string}`);
             endRun();
             break;
         }
       },
       (err) => { setError(err.message); endRun(); },
       () => { setStreaming(false); },
+      convId,  // pass conversation_id for session awareness
     );
 
     setStreaming(true, abort);

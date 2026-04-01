@@ -17,6 +17,7 @@ export function startQueryStream(
   onEvent: SSECallback,
   onError: (err: Error) => void,
   onDone: () => void,
+  conversationId?: string,
 ): () => void {
   const controller = new AbortController();
 
@@ -25,7 +26,12 @@ export function startQueryStream(
       const res = await fetch("/api/query/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, context, max_iterations: maxIterations }),
+        body: JSON.stringify({
+          query,
+          context,
+          max_iterations: maxIterations,
+          conversation_id: conversationId,
+        }),
         signal: controller.signal,
       });
 
@@ -43,22 +49,33 @@ export function startQueryStream(
 
         buffer += decoder.decode(value, { stream: true });
 
-        // Parse SSE events from buffer
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
+        // SSE events are separated by double newlines
+        // Each event block: "event: <type>\ndata: <json>\n\n"
+        const blocks = buffer.split("\n\n");
+        // Last element may be incomplete — keep it in buffer
+        buffer = blocks.pop() ?? "";
 
-        let currentEvent = "";
-        for (const line of lines) {
-          if (line.startsWith("event: ")) {
-            currentEvent = line.slice(7).trim();
-          } else if (line.startsWith("data: ") && currentEvent) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              onEvent({ event: currentEvent as StreamEvent["event"], data });
-            } catch {
-              // Skip malformed events
+        for (const block of blocks) {
+          if (!block.trim()) continue;
+
+          let eventType = "";
+          let eventData = "";
+
+          for (const line of block.split("\n")) {
+            if (line.startsWith("event: ")) {
+              eventType = line.slice(7).trim();
+            } else if (line.startsWith("data: ")) {
+              eventData = line.slice(6);
             }
-            currentEvent = "";
+          }
+
+          if (eventType && eventData) {
+            try {
+              const data = JSON.parse(eventData);
+              onEvent({ event: eventType as StreamEvent["event"], data });
+            } catch {
+              console.warn("SSE parse error:", eventType, eventData.slice(0, 100));
+            }
           }
         }
       }
