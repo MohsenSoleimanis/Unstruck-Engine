@@ -8,10 +8,12 @@ import structlog
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
 
-from mas.agents.protocol import ExplorerAgent, ExtractorAgent, ReviewerAgent
-from mas.agents.rag import MultimodalAgent, ParserAgent, RetrieverAgent
+from mas.agents.ingestion import ChunkerAgent, ContentSeparatorAgent, IngestionAgent  # noqa: F401
+from mas.agents.kg import KGBuilderAgent, KGQueryAgent  # noqa: F401
+from mas.agents.modal import ImageProcessor, TableProcessor, TextProcessor  # noqa: F401
+from mas.agents.reasoning import AnalystAgent, SynthesizerAgent  # noqa: F401
 from mas.agents.registry import registry
-from mas.agents.research import ResearcherAgent, SynthesizerAgent
+from mas.agents.retrieval import EmbedderAgent, HybridRetrieverAgent  # noqa: F401
 from mas.config import MASConfig, get_config
 from mas.llmops.cost_tracker import CostTracker
 from mas.llmops.evaluation import EvaluationEngine

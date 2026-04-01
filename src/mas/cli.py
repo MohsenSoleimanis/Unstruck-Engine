@@ -80,9 +80,11 @@ def agents():
     from mas.agents.registry import registry
 
     # Trigger agent registration by importing
-    import mas.agents.protocol  # noqa: F401
-    import mas.agents.rag  # noqa: F401
-    import mas.agents.research  # noqa: F401
+    import mas.agents.ingestion  # noqa: F401
+    import mas.agents.kg  # noqa: F401
+    import mas.agents.modal  # noqa: F401
+    import mas.agents.reasoning  # noqa: F401
+    import mas.agents.retrieval  # noqa: F401
 
     table = Table(title="Registered Agents")
     table.add_column("Type", style="cyan")
