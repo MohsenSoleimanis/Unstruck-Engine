@@ -24,14 +24,17 @@ Available agents:
 
 Rules:
 1. Each task must target exactly one agent_type from the available agents.
-2. Tasks can have dependencies (task IDs they depend on).
-3. Independent tasks should have NO dependencies so they can run in parallel.
-4. Output valid JSON: a list of task objects.
-5. Keep tasks focused — one clear instruction per task.
-6. For complex requests, use a multi-phase approach:
-   - Phase 1: Information gathering (parsing, retrieval, exploration)
-   - Phase 2: Processing (extraction, analysis, transformation)
-   - Phase 3: Review & validation (cross-checking, consistency)
+2. Tasks can have dependencies — use the INDEX (0, 1, 2...) of the task they depend on.
+3. A dependent task automatically receives the output of its predecessors.
+4. Independent tasks should have NO dependencies so they can run in parallel.
+5. Output valid JSON: a list of task objects.
+6. Keep tasks focused — one clear instruction per task.
+7. IMPORTANT: For document processing, ALWAYS use this pipeline order:
+   - First: "ingestion" to parse the document (dependencies: [])
+   - Then: "separator" to split by modality (dependencies: [0])
+   - Then: text/table/image processors (dependencies: [1])
+   - Then: kg_builder, analyst, or synthesizer (dependencies: [2,3,4])
+8. The ingestion agent needs "file_path" in context — this is provided automatically.
 
 Output format (JSON array):
 [

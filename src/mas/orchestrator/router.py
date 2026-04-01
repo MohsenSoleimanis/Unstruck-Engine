@@ -93,8 +93,10 @@ class Router:
         Execute a batch of tasks respecting dependencies.
 
         Tasks with no unmet dependencies run in parallel.
+        Outputs from completed tasks are injected into dependent tasks' context.
         """
         results: list[AgentResult] = []
+        results_by_id: dict[str, AgentResult] = {}
         completed_ids: set[str] = set()
         remaining = list(tasks)
 
@@ -113,6 +115,29 @@ class Router:
                     ))
                 break
 
+            # Inject predecessor outputs into dependent tasks' context
+            for task in ready:
+                if task.dependencies:
+                    predecessor_outputs = {}
+                    for dep_id in task.dependencies:
+                        dep_result = results_by_id.get(dep_id)
+                        if dep_result and dep_result.status in (ResultStatus.SUCCESS, ResultStatus.PARTIAL):
+                            predecessor_outputs[dep_result.agent_type] = dep_result.output
+                    if predecessor_outputs:
+                        task.context["predecessor_outputs"] = predecessor_outputs
+                        # Flatten common output keys for convenience
+                        for agent_type, output in predecessor_outputs.items():
+                            if "items" in output:
+                                task.context.setdefault("items", output["items"])
+                            if "text_aggregate" in output:
+                                task.context.setdefault("text", output["text_aggregate"])
+                            if "chunks" in output:
+                                task.context.setdefault("chunks", output["chunks"])
+                            if "entities" in output:
+                                task.context.setdefault("entities", output["entities"])
+                            if "streams" in output:
+                                task.context.setdefault("streams", output["streams"])
+
             batch_results = await asyncio.gather(
                 *[self.execute_task(t) for t in ready],
                 return_exceptions=True,
@@ -129,6 +154,7 @@ class Router:
                         errors=[str(result)],
                     )
                 results.append(result)
+                results_by_id[task.id] = result
                 completed_ids.add(task.id)
                 completed_in_batch.add(task.id)
 
