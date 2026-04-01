@@ -15,12 +15,18 @@ from mas.agents.registry import AgentRegistry
 from mas.llmops.cost_tracker import CostTracker
 from mas.llmops.monitoring import HealthMonitor
 from mas.llmops.tracing import TracingManager
+from mas.memory.knowledge_graph import KnowledgeGraph
 from mas.memory.shared import SharedMemory
 from mas.orchestrator.planner import Planner
 from mas.orchestrator.router import Router
 from mas.orchestrator.state import PipelineState
 from mas.schemas.results import AgentResult, ResultStatus
 from mas.schemas.tasks import Task, TaskStatus
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from mas.a2a.bus import MessageBus
+    from mas.tools.mcp_client import MCPToolClient
 
 logger = structlog.get_logger()
 
@@ -50,9 +56,12 @@ def build_orchestrator_graph(
     worker_llm: BaseChatModel,
     registry: AgentRegistry,
     shared_memory: SharedMemory | None = None,
+    knowledge_graph: KnowledgeGraph | None = None,
     cost_tracker: CostTracker | None = None,
     tracing: TracingManager | None = None,
     monitor: HealthMonitor | None = None,
+    message_bus: MessageBus | None = None,
+    mcp_client: MCPToolClient | None = None,
 ) -> StateGraph:
     """
     Build the main LangGraph orchestrator.
@@ -70,7 +79,15 @@ def build_orchestrator_graph(
     """
 
     planner = Planner(orchestrator_llm, registry)
-    router = Router(registry, worker_llm, cost_tracker=cost_tracker)
+    router = Router(
+        registry,
+        worker_llm,
+        cost_tracker=cost_tracker,
+        shared_memory=shared_memory,
+        knowledge_graph=knowledge_graph,
+        message_bus=message_bus,
+        mcp_client=mcp_client,
+    )
 
     # --- Node: Plan ---
     async def plan_node(state: PipelineState) -> dict[str, Any]:
@@ -99,15 +116,7 @@ def build_orchestrator_graph(
 
         results = await router.execute_plan(state["plan"], state["results"])
 
-        # Store results in shared memory
-        if shared_memory:
-            for r in results:
-                if r.status == ResultStatus.SUCCESS:
-                    shared_memory.store_result(
-                        task_id=r.task_id,
-                        agent_type=r.agent_type,
-                        content=json.dumps(r.output, default=str)[:2000],
-                    )
+        # Note: agents now auto-store results in shared memory via BaseAgent.run()
 
         completed_ids = [r.task_id for r in results if r.status == ResultStatus.SUCCESS]
         failed = [r for r in results if r.status == ResultStatus.FAILED]

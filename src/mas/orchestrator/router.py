@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from langchain_core.language_models import BaseChatModel
@@ -14,6 +14,12 @@ from mas.llmops.cost_tracker import CostTracker
 from mas.schemas.results import AgentResult, ResultStatus
 from mas.schemas.tasks import Task, TaskStatus
 
+if TYPE_CHECKING:
+    from mas.a2a.bus import MessageBus
+    from mas.memory.knowledge_graph import KnowledgeGraph
+    from mas.memory.shared import SharedMemory
+    from mas.tools.mcp_client import MCPToolClient
+
 logger = structlog.get_logger()
 
 
@@ -21,32 +27,44 @@ class Router:
     """
     Routes tasks to agents and manages execution.
 
-    Handles:
-      - Agent instantiation from registry
-      - Parallel execution of independent tasks
-      - Sequential execution of dependent tasks
-      - Result collection and error handling
+    Passes shared infrastructure (memory, KG, bus, MCP) to every agent
+    so they can communicate and share state during execution.
     """
 
     def __init__(
         self,
         registry: AgentRegistry,
         worker_llm: BaseChatModel,
+        *,
         cost_tracker: CostTracker | None = None,
+        shared_memory: SharedMemory | None = None,
+        knowledge_graph: KnowledgeGraph | None = None,
+        message_bus: MessageBus | None = None,
+        mcp_client: MCPToolClient | None = None,
         max_concurrent: int = 5,
     ) -> None:
         self.registry = registry
         self.worker_llm = worker_llm
         self.cost_tracker = cost_tracker
+        self.shared_memory = shared_memory
+        self.knowledge_graph = knowledge_graph
+        self.message_bus = message_bus
+        self.mcp_client = mcp_client
         self.max_concurrent = max_concurrent
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._agents: dict[str, BaseAgent] = {}
 
     def _get_agent(self, agent_type: str) -> BaseAgent:
-        """Get or create an agent instance."""
+        """Get or create an agent instance with full infrastructure access."""
         if agent_type not in self._agents:
             self._agents[agent_type] = self.registry.create(
-                agent_type, self.worker_llm, cost_tracker=self.cost_tracker
+                agent_type,
+                self.worker_llm,
+                cost_tracker=self.cost_tracker,
+                shared_memory=self.shared_memory,
+                knowledge_graph=self.knowledge_graph,
+                message_bus=self.message_bus,
+                mcp_client=self.mcp_client,
             )
         return self._agents[agent_type]
 
@@ -81,10 +99,8 @@ class Router:
         remaining = list(tasks)
 
         while remaining:
-            # Find all tasks whose dependencies are met
             ready = [t for t in remaining if t.is_ready(completed_ids)]
             if not ready:
-                # Deadlock — remaining tasks have unmet dependencies
                 logger.error("router.deadlock", remaining=[t.id for t in remaining])
                 for t in remaining:
                     t.status = TaskStatus.FAILED
@@ -97,7 +113,6 @@ class Router:
                     ))
                 break
 
-            # Execute ready tasks in parallel
             batch_results = await asyncio.gather(
                 *[self.execute_task(t) for t in ready],
                 return_exceptions=True,
@@ -123,7 +138,5 @@ class Router:
         completed_ids = set()
         if results_so_far:
             completed_ids = {r.task_id for r in results_so_far if r.status == ResultStatus.SUCCESS}
-
-        # Filter out already-completed tasks
         pending = [t for t in plan if t.id not in completed_ids]
         return await self.execute_batch(pending)
