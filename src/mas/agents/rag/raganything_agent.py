@@ -101,7 +101,9 @@ class RAGAnythingAgent(BaseAgent):
 
     async def _query(self, task: Task, ctx: Any) -> AgentResult:
         query = task.instruction
+        pipeline_ctx = self.get_pipeline_context(task)
 
+        # Try RAG-Anything first
         if _rag_engine and _rag_engine.is_available:
             result = await _rag_engine.query(query, mode="hybrid")
             return AgentResult(
@@ -115,13 +117,27 @@ class RAGAnythingAgent(BaseAgent):
                 },
             )
 
-        # Fallback: no retrieval without RAG-Anything
+        # Fallback: use text_aggregate from the ingest step as the "retrieved" context
+        text = pipeline_ctx.text_aggregate
+        if text:
+            logger.info("raganything.fallback_text_retrieval", text_len=len(text))
+            return AgentResult(
+                task_id=task.id,
+                agent_id=self.agent_id,
+                agent_type=self.agent_type,
+                status=ResultStatus.SUCCESS,
+                output={
+                    "response": text[:15000],
+                    "retrieved": [{"text": text[:15000], "source": "fallback_text", "score": 0.8}],
+                },
+            )
+
         return AgentResult(
             task_id=task.id,
             agent_id=self.agent_id,
             agent_type=self.agent_type,
             status=ResultStatus.PARTIAL,
-            output={"response": "", "retrieved": [], "message": "RAG engine not available"},
+            output={"response": "", "retrieved": [], "message": "No content available"},
         )
 
     async def _legacy_ingest(self, task: Task, file_path: str) -> AgentResult:

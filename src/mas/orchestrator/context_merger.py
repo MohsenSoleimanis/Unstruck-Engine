@@ -60,6 +60,8 @@ def _merge_raganything(ctx: PipelineContext, output: dict[str, Any]) -> Pipeline
         ctx.rag_indexed = True
     if "content_items" in output:
         ctx.content_items = [ContentItem(**i) if isinstance(i, dict) else i for i in output["content_items"]]
+    if "text_aggregate" in output:
+        ctx.text_aggregate = output["text_aggregate"]
     if "chunks" in output:
         ctx.chunks = [ChunkItem(**c) if isinstance(c, dict) else c for c in output["chunks"]]
     if "entities" in output:
