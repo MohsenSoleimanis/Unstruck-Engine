@@ -12,7 +12,6 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from mas.api.events import broadcaster
 from mas.utils.security import sanitize_filename
 
 logger = structlog.get_logger()
@@ -38,6 +37,26 @@ class QueryResponse(BaseModel):
 def _get_pipeline():
     from mas.api.server import app
     return app.state.pipeline
+
+
+def _build_initial_state(query: str, context: dict, max_iterations: int) -> dict:
+    return {
+        "user_query": query,
+        "user_context": context,
+        "plan": [],
+        "current_phase": "planning",
+        "pending_tasks": [],
+        "active_tasks": [],
+        "completed_task_ids": [],
+        "results": [],
+        "messages": [],
+        "task_ledger": "",
+        "progress_ledger": "",
+        "iteration": 0,
+        "max_iterations": max_iterations,
+        "should_replan": False,
+        "final_output": {},
+    }
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -69,9 +88,10 @@ async def query(request: QueryRequest):
 @router.post("/query/stream")
 async def query_stream(request: QueryRequest):
     """
-    SSE streaming — yields real-time events as the pipeline executes.
+    SSE streaming — yields events as the pipeline executes.
 
-    Event types: phase, plan, task_start, task_complete, token, cost, done, error
+    LangGraph astream() yields {node_name: node_output} per node.
+    We map each node to appropriate SSE events.
     """
     pipeline = _get_pipeline()
 
@@ -80,65 +100,54 @@ async def query_stream(request: QueryRequest):
         start = time.perf_counter()
 
         try:
-            initial_state = {
-                "user_query": request.query,
-                "user_context": request.context,
-                "plan": [],
-                "current_phase": "planning",
-                "pending_tasks": [],
-                "active_tasks": [],
-                "completed_task_ids": [],
-                "results": [],
-                "messages": [],
-                "task_ledger": "",
-                "progress_ledger": "",
-                "iteration": 0,
-                "max_iterations": request.max_iterations,
-                "should_replan": False,
-                "final_output": {},
-            }
+            initial_state = _build_initial_state(request.query, request.context, request.max_iterations)
 
-            prev_phase = ""
-            prev_result_count = 0
+            # astream with stream_mode="updates" yields {node_name: output_dict}
+            async for chunk in pipeline._compiled.astream(initial_state, stream_mode="updates"):
+                for node_name, node_output in chunk.items():
+                    if not isinstance(node_output, dict):
+                        continue
 
-            async for state_chunk in pipeline._compiled.astream(initial_state):
-                state = state_chunk if isinstance(state_chunk, dict) else {}
+                    if node_name == "plan":
+                        yield _sse("phase", {"phase": "planning"})
+                        plan = node_output.get("plan", [])
+                        if plan:
+                            tasks = []
+                            for t in plan:
+                                tasks.append({
+                                    "id": t.id if hasattr(t, "id") else str(t),
+                                    "agent_type": t.agent_type if hasattr(t, "agent_type") else "",
+                                    "instruction": (t.instruction if hasattr(t, "instruction") else "")[:80],
+                                })
+                            yield _sse("plan", {"tasks": tasks})
+                        yield _sse("phase", {"phase": "executing"})
 
-                # Phase change
-                phase = state.get("current_phase", "")
-                if phase and phase != prev_phase:
-                    yield _sse("phase", {"phase": phase, "iteration": state.get("iteration", 0)})
-                    prev_phase = phase
+                    elif node_name == "execute":
+                        results = node_output.get("results", [])
+                        for r in results:
+                            yield _sse("task_complete", {
+                                "task_id": r.task_id if hasattr(r, "task_id") else "",
+                                "agent_type": r.agent_type if hasattr(r, "agent_type") else "",
+                                "status": r.status.value if hasattr(r, "status") else "unknown",
+                                "duration_ms": getattr(r, "duration_ms", 0),
+                                "cost_usd": getattr(r, "cost_usd", 0),
+                            })
 
-                # New plan
-                plan = state.get("plan", [])
-                if plan and prev_phase == "executing":
-                    tasks = [{"id": t.id, "agent_type": t.agent_type, "instruction": t.instruction[:80]} for t in plan]
-                    yield _sse("plan", {"tasks": tasks})
+                    elif node_name == "review":
+                        yield _sse("phase", {"phase": "reviewing"})
 
-                # New results
-                results = state.get("results", [])
-                if len(results) > prev_result_count:
-                    for r in results[prev_result_count:]:
-                        yield _sse("task_complete", {
-                            "task_id": r.task_id,
-                            "agent_type": r.agent_type,
-                            "status": r.status.value,
-                            "duration_ms": r.duration_ms,
-                            "tokens": r.token_usage,
-                            "cost_usd": r.cost_usd,
+                    elif node_name == "replan":
+                        yield _sse("phase", {"phase": "replanning"})
+
+                    elif node_name == "synthesize":
+                        yield _sse("phase", {"phase": "complete"})
+                        final = node_output.get("final_output", {})
+                        duration_ms = int((time.perf_counter() - start) * 1000)
+                        yield _sse("done", {
+                            "output": final,
+                            "cost": pipeline.cost_tracker.get_summary(),
+                            "duration_ms": duration_ms,
                         })
-                    prev_result_count = len(results)
-
-                # Final output
-                final = state.get("final_output", {})
-                if final:
-                    duration_ms = int((time.perf_counter() - start) * 1000)
-                    yield _sse("done", {
-                        "output": final,
-                        "cost": pipeline.cost_tracker.get_summary(),
-                        "duration_ms": duration_ms,
-                    })
 
         except Exception as e:
             logger.exception("query_stream.failed", stream_id=stream_id)
