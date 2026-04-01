@@ -25,16 +25,18 @@ Available agents:
 Rules:
 1. Each task must target exactly one agent_type from the available agents.
 2. Tasks can have dependencies — use the INDEX (0, 1, 2...) of the task they depend on.
-3. A dependent task automatically receives the output of its predecessors.
+3. All agents share a typed blackboard — upstream outputs are automatically available.
 4. Independent tasks should have NO dependencies so they can run in parallel.
 5. Output valid JSON: a list of task objects.
 6. Keep tasks focused — one clear instruction per task.
-7. IMPORTANT: For document processing, ALWAYS use this pipeline order:
-   - First: "ingestion" to parse the document (dependencies: [])
-   - Then: "separator" to split by modality (dependencies: [0])
-   - Then: text/table/image processors (dependencies: [1])
-   - Then: kg_builder, analyst, or synthesizer (dependencies: [2,3,4])
-8. The ingestion agent needs "file_path" in context — this is provided automatically.
+7. IMPORTANT pipeline for document questions:
+   - Task 0: "raganything" with context {{"mode": "ingest"}} — parses + indexes the document
+   - Task 1: "raganything" with context {{"mode": "query"}} — retrieves relevant context (depends: [0])
+   - Task 2: "analyst" — reasons over retrieved context to answer the question (depends: [1])
+8. For questions WITHOUT a file, skip ingest — use "analyst" directly or "raganything" query + "analyst".
+9. Add "kg_query" if the question needs explicit graph traversal reasoning.
+10. Add "synthesizer" only when combining outputs from multiple reasoning agents.
+11. File path is provided automatically — do NOT put it in the task context.
 
 Output format (JSON array):
 [

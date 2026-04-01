@@ -13,6 +13,7 @@ from langchain_core.language_models import BaseChatModel
 
 from mas.llmops.cost_tracker import CostTracker
 from mas.memory.local import LocalMemory
+from mas.schemas.context import PipelineContext
 from mas.schemas.results import AgentResult, ResultStatus
 from mas.schemas.tasks import Task
 
@@ -207,6 +208,17 @@ class BaseAgent(ABC):
         if self.mcp_client:
             return self.mcp_client.list_tools()
         return []
+
+    # --- PipelineContext helpers ---
+
+    def get_pipeline_context(self, task: Task) -> PipelineContext:
+        """Read the typed PipelineContext from task.context.
+
+        The router injects the full context as _pipeline_ctx before dispatching.
+        This gives every agent typed access to all upstream data.
+        """
+        raw = task.context.get("_pipeline_ctx", {})
+        return PipelineContext.model_validate(raw)
 
     def get_capabilities(self) -> dict[str, Any]:
         """Return agent card (A2A-inspired) for dynamic discovery."""

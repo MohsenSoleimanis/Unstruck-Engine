@@ -13,11 +13,16 @@ from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
 from mas.a2a.bus import MessageBus
-from mas.agents.ingestion import ChunkerAgent, ContentSeparatorAgent, IngestionAgent  # noqa: F401
+# Core agents (kept)
 from mas.agents.kg import KGBuilderAgent, KGQueryAgent  # noqa: F401
-from mas.agents.modal import ImageProcessor, TableProcessor, TextProcessor  # noqa: F401
 from mas.agents.reasoning import AnalystAgent, SynthesizerAgent  # noqa: F401
 from mas.agents.registry import registry
+# RAG-Anything agent (replaces 7 legacy agents)
+from mas.agents.rag import RAGAnythingAgent, RAGEngine  # noqa: F401
+from mas.agents.rag.raganything_agent import set_rag_engine
+# Legacy agents (still registered as fallback)
+from mas.agents.ingestion import ChunkerAgent, ContentSeparatorAgent, IngestionAgent  # noqa: F401
+from mas.agents.modal import ImageProcessor, TableProcessor, TextProcessor  # noqa: F401
 from mas.agents.retrieval import EmbedderAgent, HybridRetrieverAgent  # noqa: F401
 from mas.config import MASConfig, get_config
 from mas.llmops.cost_tracker import CostTracker
@@ -75,6 +80,15 @@ class MASPipeline:
         # MCP tool client
         self.mcp_client = MCPToolClient()
         self.mcp_client.register_builtin_tools()
+
+        # RAG-Anything engine
+        self.rag_engine = RAGEngine(
+            working_dir=str(self.config.data_dir / "raganything"),
+            llm_model=self.config.llm.worker_model,
+            embedding_model=self.config.llm.embedding_model,
+            embedding_dim=self.config.llm.embedding_dim,
+        )
+        set_rag_engine(self.rag_engine)
 
         # LLMs
         self.orchestrator_llm = self._create_llm(self.config.llm.orchestrator_model)

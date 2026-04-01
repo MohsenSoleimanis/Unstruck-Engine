@@ -52,22 +52,30 @@ class AnalystAgent(BaseAgent):
 
     async def execute(self, task: Task) -> AgentResult:
         question = task.instruction
-        retrieved = task.context.get("retrieved", [])
-        graph_context = task.context.get("graph_context", "")
-        extra_context = task.context.get("extra_context", "")
+        pipeline_ctx = self.get_pipeline_context(task)
 
-        # Build context from retrieved chunks
+        # Build context from PipelineContext (typed blackboard)
         context_parts = []
-        for item in retrieved:
-            text = item.get("text", str(item))
-            meta = item.get("metadata", {})
-            source = meta.get("type", item.get("source", ""))
-            context_parts.append(f"[{source}] {text}")
 
-        if graph_context:
-            context_parts.append(f"[Knowledge Graph]\n{graph_context}")
-        if extra_context:
-            context_parts.append(extra_context)
+        # RAG-Anything response
+        if pipeline_ctx.rag_response:
+            context_parts.append(f"[RAG-Anything]\n{pipeline_ctx.rag_response}")
+
+        # Retrieved items
+        for item in pipeline_ctx.retrieved:
+            context_parts.append(f"[{item.source}] {item.text}")
+
+        # Text aggregate from ingestion
+        if pipeline_ctx.text_aggregate:
+            context_parts.append(f"[Document Text]\n{pipeline_ctx.text_aggregate[:8000]}")
+
+        # Fallback: raw task.context (backward compat)
+        if not context_parts:
+            for item in task.context.get("retrieved", []):
+                context_parts.append(str(item.get("text", item)))
+            extra = task.context.get("extra_context", "")
+            if extra:
+                context_parts.append(extra)
 
         context = "\n\n".join(context_parts)
 

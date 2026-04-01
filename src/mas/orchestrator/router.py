@@ -11,6 +11,8 @@ from langchain_core.language_models import BaseChatModel
 from mas.agents.base import BaseAgent
 from mas.agents.registry import AgentRegistry
 from mas.llmops.cost_tracker import CostTracker
+from mas.orchestrator.context_merger import merge_agent_output
+from mas.schemas.context import PipelineContext
 from mas.schemas.results import AgentResult, ResultStatus
 from mas.schemas.tasks import Task, TaskStatus
 
@@ -27,8 +29,10 @@ class Router:
     """
     Routes tasks to agents and manages execution.
 
-    Passes shared infrastructure (memory, KG, bus, MCP) to every agent
-    so they can communicate and share state during execution.
+    Uses PipelineContext as the shared blackboard:
+      - Before dispatching a task, injects the full context into task.context
+      - After an agent completes, merges its output into PipelineContext
+      - No more ad-hoc key flattening
     """
 
     def __init__(
@@ -54,8 +58,10 @@ class Router:
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._agents: dict[str, BaseAgent] = {}
 
+        # Shared blackboard — all agents read/write through this
+        self.pipeline_context = PipelineContext()
+
     def _get_agent(self, agent_type: str) -> BaseAgent:
-        """Get or create an agent instance with full infrastructure access."""
         if agent_type not in self._agents:
             self._agents[agent_type] = self.registry.create(
                 agent_type,
@@ -69,13 +75,22 @@ class Router:
         return self._agents[agent_type]
 
     async def execute_task(self, task: Task) -> AgentResult:
-        """Execute a single task via the appropriate agent."""
         async with self._semaphore:
             try:
+                # Inject current PipelineContext into the task so agents can read it
+                task.context["_pipeline_ctx"] = self.pipeline_context.model_dump()
+
                 agent = self._get_agent(task.agent_type)
                 task.status = TaskStatus.IN_PROGRESS
                 result = await agent.run(task)
                 task.status = TaskStatus.COMPLETED if result.status == ResultStatus.SUCCESS else TaskStatus.FAILED
+
+                # Merge agent output into PipelineContext (typed, not ad-hoc)
+                if result.status in (ResultStatus.SUCCESS, ResultStatus.PARTIAL):
+                    self.pipeline_context = merge_agent_output(
+                        self.pipeline_context, task.agent_type, result.output
+                    )
+
                 return result
             except Exception as e:
                 task.status = TaskStatus.FAILED
@@ -89,14 +104,8 @@ class Router:
                 )
 
     async def execute_batch(self, tasks: list[Task]) -> list[AgentResult]:
-        """
-        Execute a batch of tasks respecting dependencies.
-
-        Tasks with no unmet dependencies run in parallel.
-        Outputs from completed tasks are injected into dependent tasks' context.
-        """
+        """Execute tasks respecting dependencies. Context flows via PipelineContext."""
         results: list[AgentResult] = []
-        results_by_id: dict[str, AgentResult] = {}
         completed_ids: set[str] = set()
         remaining = list(tasks)
 
@@ -115,29 +124,6 @@ class Router:
                     ))
                 break
 
-            # Inject predecessor outputs into dependent tasks' context
-            for task in ready:
-                if task.dependencies:
-                    predecessor_outputs = {}
-                    for dep_id in task.dependencies:
-                        dep_result = results_by_id.get(dep_id)
-                        if dep_result and dep_result.status in (ResultStatus.SUCCESS, ResultStatus.PARTIAL):
-                            predecessor_outputs[dep_result.agent_type] = dep_result.output
-                    if predecessor_outputs:
-                        task.context["predecessor_outputs"] = predecessor_outputs
-                        # Flatten common output keys for convenience
-                        for agent_type, output in predecessor_outputs.items():
-                            if "items" in output:
-                                task.context.setdefault("items", output["items"])
-                            if "text_aggregate" in output:
-                                task.context.setdefault("text", output["text_aggregate"])
-                            if "chunks" in output:
-                                task.context.setdefault("chunks", output["chunks"])
-                            if "entities" in output:
-                                task.context.setdefault("entities", output["entities"])
-                            if "streams" in output:
-                                task.context.setdefault("streams", output["streams"])
-
             batch_results = await asyncio.gather(
                 *[self.execute_task(t) for t in ready],
                 return_exceptions=True,
@@ -154,7 +140,6 @@ class Router:
                         errors=[str(result)],
                     )
                 results.append(result)
-                results_by_id[task.id] = result
                 completed_ids.add(task.id)
                 completed_in_batch.add(task.id)
 
@@ -163,9 +148,12 @@ class Router:
         return results
 
     async def execute_plan(self, plan: list[Task], results_so_far: list[AgentResult] | None = None) -> list[AgentResult]:
-        """Execute a full plan, carrying forward any existing results."""
         completed_ids = set()
         if results_so_far:
             completed_ids = {r.task_id for r in results_so_far if r.status == ResultStatus.SUCCESS}
         pending = [t for t in plan if t.id not in completed_ids]
         return await self.execute_batch(pending)
+
+    def get_context(self) -> PipelineContext:
+        """Get the current pipeline context."""
+        return self.pipeline_context
