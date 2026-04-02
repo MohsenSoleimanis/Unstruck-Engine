@@ -73,10 +73,18 @@ class RAGAnythingAgent(BaseAgent):
                 errors=["No file_path in task context"],
             )
 
-        # Try RAG-Anything first
-        if _rag_engine and _rag_engine.is_available:
+        # Try RAG engine (LightRAG + RAG-Anything) — lazy-initializes on first call
+        if _rag_engine:
             result = await _rag_engine.ingest_document(file_path)
             if not result.get("fallback"):
+                # Also build text_aggregate for the analyst
+                text_parts = []
+                for item in result.get("content_items", []):
+                    if item.get("content"):
+                        page = item.get("page_idx", "")
+                        prefix = f"[Page {page}] " if page else ""
+                        text_parts.append(f"{prefix}{item['content']}")
+
                 return AgentResult(
                     task_id=task.id,
                     agent_id=self.agent_id,
@@ -84,10 +92,9 @@ class RAGAnythingAgent(BaseAgent):
                     status=ResultStatus.SUCCESS,
                     output={
                         "doc_id": result.get("doc_id", ""),
-                        "indexed": True,
-                        "content_items": result.get("content_items", []),
-                        "chunks": result.get("chunks", []),
-                        "entities": result.get("entities", []),
+                        "indexed": result.get("indexed", False),
+                        "content_items": result.get("content_items", [])[:50],
+                        "text_aggregate": "\n\n".join(text_parts)[:50000],
                         "document": {
                             "file_path": file_path,
                             "file_type": file_path.rsplit(".", 1)[-1] if "." in file_path else "",
@@ -95,7 +102,7 @@ class RAGAnythingAgent(BaseAgent):
                     },
                 )
 
-        # Fallback: use legacy ingestion (PyMuPDF)
+        # Fallback: use legacy ingestion (PyMuPDF only)
         logger.info("raganything.fallback_to_legacy", file_path=file_path)
         return await self._legacy_ingest(task, file_path)
 
@@ -103,21 +110,24 @@ class RAGAnythingAgent(BaseAgent):
         query = task.instruction
         pipeline_ctx = self.get_pipeline_context(task)
 
-        # Try RAG-Anything first
+        # Try RAG engine (LightRAG KG-based retrieval)
         if _rag_engine and _rag_engine.is_available:
-            result = await _rag_engine.query(query, mode="hybrid")
-            return AgentResult(
-                task_id=task.id,
-                agent_id=self.agent_id,
-                agent_type=self.agent_type,
-                status=ResultStatus.SUCCESS if not result.get("error") else ResultStatus.PARTIAL,
-                output={
-                    "response": result.get("response", ""),
-                    "retrieved": [{"text": result.get("response", ""), "source": "raganything", "score": 1.0}],
-                },
-            )
+            result = await _rag_engine.query(query, mode="mix")
+            response = result.get("response", "")
+            if response and not result.get("error"):
+                logger.info("raganything.kg_query_success", response_len=len(response))
+                return AgentResult(
+                    task_id=task.id,
+                    agent_id=self.agent_id,
+                    agent_type=self.agent_type,
+                    status=ResultStatus.SUCCESS,
+                    output={
+                        "response": response,
+                        "retrieved": [{"text": response, "source": "lightrag_kg", "score": 1.0}],
+                    },
+                )
 
-        # Fallback: use text_aggregate from the ingest step as the "retrieved" context
+        # Fallback: use text_aggregate from ingest step
         text = pipeline_ctx.text_aggregate
         if text:
             logger.info("raganything.fallback_text_retrieval", text_len=len(text))

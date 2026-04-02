@@ -1,7 +1,10 @@
 """RAG-Anything engine — lifecycle management for the RAG engine singleton.
 
-Initializes RAG-Anything once at startup, provides it to agents.
-Handles the LLM adapter (LangChain → RAG-Anything callable).
+Properly initializes LightRAG + RAG-Anything with:
+  - Pre-initialized LightRAG instance (required when MinerU parser not installed)
+  - Correct LLM function wrapper (model name bound into closure)
+  - Proper embedding function with numpy return
+  - Storage initialization before any insert/query
 """
 
 from __future__ import annotations
@@ -13,8 +16,17 @@ import structlog
 
 logger = structlog.get_logger()
 
-# Sentinel for when RAG-Anything is not installed
 _RAG_AVAILABLE = False
+_LIGHTRAG_AVAILABLE = False
+
+try:
+    from lightrag import LightRAG
+    from lightrag.utils import EmbeddingFunc
+    _LIGHTRAG_AVAILABLE = True
+except ImportError:
+    LightRAG = None  # type: ignore
+    EmbeddingFunc = None  # type: ignore
+
 try:
     from raganything import RAGAnything, RAGAnythingConfig
     _RAG_AVAILABLE = True
@@ -25,11 +37,12 @@ except ImportError:
 
 class RAGEngine:
     """
-    Manages RAG-Anything lifecycle.
+    Manages LightRAG + RAG-Anything lifecycle.
 
-    - Initializes once with working_dir, LLM config, embedding config
-    - Provides process_document + query methods
-    - Adapts LangChain LLMs to RAG-Anything's callable interface
+    Key insight from testing: RAG-Anything needs a pre-initialized LightRAG
+    when MinerU parser is not installed. LightRAG needs initialize_storages()
+    called before any insert/query. The LLM function must accept
+    (prompt, system_prompt=..., **kwargs) — NOT (model, prompt, ...).
     """
 
     def __init__(
@@ -44,32 +57,56 @@ class RAGEngine:
         self.llm_model = llm_model
         self.embedding_model = embedding_model
         self.embedding_dim = embedding_dim
+        self._lightrag: Any = None
         self._rag: Any = None
         self._initialized = False
+        self._storages_ready = False
 
     async def initialize(self) -> bool:
-        """Initialize RAG-Anything. Returns True if successful."""
+        """Initialize LightRAG + RAG-Anything. Returns True if successful."""
         if self._initialized:
             return True
 
-        if not _RAG_AVAILABLE:
-            logger.warning("rag_engine.not_installed", message="raganything package not available — using fallback agents")
+        if not _LIGHTRAG_AVAILABLE:
+            logger.warning("rag_engine.lightrag_not_installed")
             return False
 
         try:
+            # Create LLM and embedding functions
             llm_func = self._create_llm_func()
-            embedding_func = self._create_embedding_func()
+            embed_func = self._create_embedding_func()
 
-            config = RAGAnythingConfig(
+            # Create LightRAG first (required by RAG-Anything)
+            self._lightrag = LightRAG(
                 working_dir=str(self.working_dir),
                 llm_model_func=llm_func,
-                embedding_func=embedding_func,
-                embedding_dim=self.embedding_dim,
+                llm_model_name=self.llm_model,
+                embedding_func=embed_func,
             )
 
-            self._rag = RAGAnything(config=config)
+            # Initialize storages (REQUIRED before insert/query)
+            await self._lightrag.initialize_storages()
+            self._storages_ready = True
+
+            # Create RAG-Anything with pre-initialized LightRAG
+            if _RAG_AVAILABLE:
+                self._rag = RAGAnything(
+                    lightrag=self._lightrag,
+                    llm_model_func=llm_func,
+                    embedding_func=embed_func,
+                    config=RAGAnythingConfig(
+                        working_dir=str(self.working_dir),
+                        enable_image_processing=False,
+                        enable_table_processing=False,
+                        enable_equation_processing=False,
+                    ),
+                )
+
             self._initialized = True
-            logger.info("rag_engine.initialized", working_dir=str(self.working_dir))
+            logger.info("rag_engine.initialized",
+                        working_dir=str(self.working_dir),
+                        has_raganything=_RAG_AVAILABLE,
+                        lightrag=True)
             return True
 
         except Exception as e:
@@ -77,69 +114,151 @@ class RAGEngine:
             return False
 
     def _create_llm_func(self):
-        """Create an async callable that RAG-Anything expects for LLM calls."""
-        import openai
-        client = openai.AsyncOpenAI()
+        """
+        Create an async LLM callable matching LightRAG's expected signature.
+
+        LightRAG calls: llm_func(prompt, system_prompt=None, history_messages=None, **kwargs)
+        NOT: llm_func(model, prompt, ...) — the model is bound in the closure.
+        """
+        from lightrag.llm.openai import openai_complete_if_cache
         model = self.llm_model
 
-        async def llm_func(prompt: str, system_prompt: str | None = None, **kwargs: Any) -> str:
-            messages = []
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": prompt})
-            response = await client.chat.completions.create(model=model, messages=messages)
-            return response.choices[0].message.content or ""
+        async def llm_func(
+            prompt: str,
+            system_prompt: str | None = None,
+            history_messages: list | None = None,
+            **kwargs: Any,
+        ) -> str:
+            # openai_complete_if_cache expects (model, prompt, system_prompt, ...)
+            return await openai_complete_if_cache(
+                model,
+                prompt,
+                system_prompt=system_prompt,
+                history_messages=history_messages or [],
+                **kwargs,
+            )
 
         return llm_func
 
     def _create_embedding_func(self):
-        """Create an async callable for embeddings."""
-        import openai
-        client = openai.AsyncOpenAI()
+        """Create embedding function matching LightRAG's EmbeddingFunc spec."""
+        from lightrag.llm.openai import openai_embed
         model = self.embedding_model
 
-        async def embedding_func(texts: list[str]) -> list[list[float]]:
-            response = await client.embeddings.create(model=model, input=texts)
-            return [item.embedding for item in response.data]
-
-        return embedding_func
+        return EmbeddingFunc(
+            embedding_dim=self.embedding_dim,
+            max_token_size=8192,
+            func=lambda texts: openai_embed(texts, model=model),
+        )
 
     async def ingest_document(self, file_path: str, doc_id: str | None = None) -> dict[str, Any]:
-        """Process and index a document via RAG-Anything."""
-        if not self._initialized or not self._rag:
+        """Ingest a document — parse with PyMuPDF, index via LightRAG."""
+        if not await self._ensure_ready():
             return {"error": "RAG engine not initialized", "fallback": True}
 
         try:
-            result = await self._rag.process_document_complete(
-                file_path=file_path,
-                doc_id=doc_id,
-            )
+            # Parse with PyMuPDF (works without MinerU)
+            content_list = self._parse_document(file_path)
+
+            if not content_list:
+                return {"error": f"No content extracted from {file_path}", "fallback": True}
+
+            # Insert directly into LightRAG (builds KG + vector index)
+            # Using ainsert() instead of RAG-Anything's insert_content_list()
+            # because insert_content_list doesn't forward text to LightRAG's
+            # entity extraction pipeline when parser isn't installed.
+            texts = [item["content"] for item in content_list if item.get("content")]
+            full_text = "\n\n".join(texts)
+            await self._lightrag.ainsert(full_text)
+
+            logger.info("rag_engine.ingested",
+                        file_path=file_path,
+                        items=len(content_list),
+                        via="raganything" if self._rag else "lightrag")
+
             return {
-                "doc_id": result.get("doc_id", doc_id or file_path),
+                "doc_id": doc_id or Path(file_path).stem,
                 "indexed": True,
-                "content_items": result.get("content_items", []),
-                "chunks": result.get("chunks", []),
-                "entities": result.get("entities", []),
+                "content_items": content_list[:100],  # cap for serialization
             }
+
         except Exception as e:
             logger.error("rag_engine.ingest_failed", error=str(e), file_path=file_path)
             return {"error": str(e), "fallback": True}
 
-    async def query(self, prompt: str, mode: str = "hybrid") -> dict[str, Any]:
-        """Query the RAG engine."""
-        if not self._initialized or not self._rag:
+    async def query(self, prompt: str, mode: str = "mix") -> dict[str, Any]:
+        """Query the indexed documents."""
+        if not await self._ensure_ready():
             return {"error": "RAG engine not initialized", "response": ""}
 
         try:
-            response = await self._rag.aquery(prompt, mode=mode)
+            # Use LightRAG directly — more reliable than RAG-Anything wrapper
+            response = await self._lightrag.aquery(prompt)
+
             return {
                 "response": response if isinstance(response, str) else str(response),
                 "mode": mode,
             }
+
         except Exception as e:
             logger.error("rag_engine.query_failed", error=str(e))
             return {"error": str(e), "response": ""}
 
+    async def _ensure_ready(self) -> bool:
+        """Lazy initialization — initialize on first use."""
+        if not self._initialized:
+            return await self.initialize()
+        return self._initialized
+
+    def _parse_document(self, file_path: str) -> list[dict[str, Any]]:
+        """Parse document with PyMuPDF. Returns content list for RAG-Anything."""
+        import fitz
+
+        path = Path(file_path)
+        if not path.exists():
+            logger.error("rag_engine.file_not_found", file_path=file_path)
+            return []
+
+        content_list: list[dict[str, Any]] = []
+
+        if path.suffix.lower() == ".pdf":
+            with fitz.open(str(path)) as doc:
+                for pn in range(len(doc)):
+                    page = doc[pn]
+
+                    text = page.get_text("text")
+                    if text.strip():
+                        content_list.append({
+                            "type": "text",
+                            "content": text,
+                            "page_idx": pn + 1,
+                        })
+
+                    # Extract tables and add as text (LightRAG processes all text)
+                    tables = page.find_tables()
+                    if tables and tables.tables:
+                        for t in tables.tables:
+                            try:
+                                data = t.extract()
+                                table_str = "\n".join(
+                                    " | ".join(str(c or "") for c in row) for row in data
+                                )
+                                content_list.append({
+                                    "type": "text",
+                                    "content": f"[TABLE on page {pn + 1}]\n{table_str}",
+                                    "page_idx": pn + 1,
+                                })
+                            except Exception:
+                                pass
+        else:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+                content_list.append({"type": "text", "content": text})
+            except Exception:
+                pass
+
+        return content_list
+
     @property
     def is_available(self) -> bool:
-        return self._initialized and self._rag is not None
+        return self._initialized and (self._lightrag is not None or self._rag is not None)
