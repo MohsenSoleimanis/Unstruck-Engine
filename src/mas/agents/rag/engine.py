@@ -9,10 +9,17 @@ Properly initializes LightRAG + RAG-Anything with:
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 from typing import Any
 
 import structlog
+
+# Ensure MinerU scripts are on PATH (Windows user scripts dir)
+_user_scripts = Path.home() / "AppData" / "Roaming" / "Python" / f"Python{sys.version_info.major}{sys.version_info.minor}" / "Scripts"
+if _user_scripts.exists() and str(_user_scripts) not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = str(_user_scripts) + os.pathsep + os.environ.get("PATH", "")
 
 logger = structlog.get_logger()
 
@@ -163,13 +170,32 @@ class RAGEngine:
             if not content_list:
                 return {"error": f"No content extracted from {file_path}", "fallback": True}
 
-            # Insert directly into LightRAG (builds KG + vector index)
-            # Using ainsert() instead of RAG-Anything's insert_content_list()
-            # because insert_content_list doesn't forward text to LightRAG's
-            # entity extraction pipeline when parser isn't installed.
-            texts = [item["content"] for item in content_list if item.get("content")]
-            full_text = "\n\n".join(texts)
-            await self._lightrag.ainsert(full_text)
+            # Use RAG-Anything's full pipeline if available (MinerU parser + multimodal)
+            if self._rag and self._rag.check_parser_installation():
+                logger.info("rag_engine.using_raganything_full", file_path=file_path)
+                await self._rag.process_document_complete(
+                    file_path=file_path,
+                    doc_id=doc_id or Path(file_path).stem,
+                )
+            elif self._rag:
+                # MinerU not available — parse with PyMuPDF, insert content list
+                logger.info("rag_engine.using_raganything_content_list", file_path=file_path)
+                content_list = self._parse_document(file_path)
+                await self._rag.insert_content_list(
+                    content_list,
+                    file_path=file_path,
+                    doc_id=doc_id or Path(file_path).stem,
+                )
+                # Also insert text directly into LightRAG for KG extraction
+                # (RAG-Anything's insert_content_list may not forward text to LightRAG)
+                texts = [item["content"] for item in content_list if item.get("content")]
+                if texts:
+                    await self._lightrag.ainsert("\n\n".join(texts))
+            else:
+                # No RAG-Anything — use LightRAG directly
+                logger.info("rag_engine.using_lightrag_direct", file_path=file_path)
+                texts = [item["content"] for item in content_list if item.get("content")]
+                await self._lightrag.ainsert("\n\n".join(texts))
 
             logger.info("rag_engine.ingested",
                         file_path=file_path,
@@ -192,8 +218,11 @@ class RAGEngine:
             return {"error": "RAG engine not initialized", "response": ""}
 
         try:
-            # Use LightRAG directly — more reliable than RAG-Anything wrapper
-            response = await self._lightrag.aquery(prompt)
+            # Use RAG-Anything if available (supports multimodal query), else LightRAG
+            if self._rag:
+                response = await self._rag.aquery(prompt, mode=mode)
+            else:
+                response = await self._lightrag.aquery(prompt)
 
             return {
                 "response": response if isinstance(response, str) else str(response),
