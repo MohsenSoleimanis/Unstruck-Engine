@@ -73,18 +73,10 @@ class RAGAnythingAgent(BaseAgent):
                 errors=["No file_path in task context"],
             )
 
-        # Try RAG engine (LightRAG + RAG-Anything) — lazy-initializes on first call
+        # Use RAG-Anything engine (lazy-initializes on first call)
         if _rag_engine:
-            result = await _rag_engine.ingest_document(file_path)
+            result = await _rag_engine.ingest_document(file_path, doc_id=file_path)
             if not result.get("fallback"):
-                # Also build text_aggregate for the analyst
-                text_parts = []
-                for item in result.get("content_items", []):
-                    if item.get("content"):
-                        page = item.get("page_idx", "")
-                        prefix = f"[Page {page}] " if page else ""
-                        text_parts.append(f"{prefix}{item['content']}")
-
                 return AgentResult(
                     task_id=task.id,
                     agent_id=self.agent_id,
@@ -93,29 +85,27 @@ class RAGAnythingAgent(BaseAgent):
                     output={
                         "doc_id": result.get("doc_id", ""),
                         "indexed": result.get("indexed", False),
-                        "content_items": result.get("content_items", [])[:50],
-                        "text_aggregate": "\n\n".join(text_parts)[:50000],
                         "document": {
                             "file_path": file_path,
                             "file_type": file_path.rsplit(".", 1)[-1] if "." in file_path else "",
                         },
                     },
                 )
+            else:
+                logger.warning("raganything.ingest_fallback", error=result.get("error"))
 
-        # Fallback: use legacy ingestion (PyMuPDF only)
+        # Last resort fallback
         logger.info("raganything.fallback_to_legacy", file_path=file_path)
         return await self._legacy_ingest(task, file_path)
 
     async def _query(self, task: Task, ctx: Any) -> AgentResult:
         query = task.instruction
-        pipeline_ctx = self.get_pipeline_context(task)
 
-        # Try RAG engine (LightRAG KG-based retrieval)
+        # Use RAG-Anything's aquery — retrieves from KG + vector index
         if _rag_engine and _rag_engine.is_available:
             result = await _rag_engine.query(query, mode="mix")
             response = result.get("response", "")
             if response and not result.get("error"):
-                logger.info("raganything.kg_query_success", response_len=len(response))
                 return AgentResult(
                     task_id=task.id,
                     agent_id=self.agent_id,
@@ -123,31 +113,18 @@ class RAGAnythingAgent(BaseAgent):
                     status=ResultStatus.SUCCESS,
                     output={
                         "response": response,
-                        "retrieved": [{"text": response, "source": "lightrag_kg", "score": 1.0}],
+                        "retrieved": [{"text": response, "source": "raganything", "score": 1.0}],
                     },
                 )
-
-        # Fallback: use text_aggregate from ingest step
-        text = pipeline_ctx.text_aggregate
-        if text:
-            logger.info("raganything.fallback_text_retrieval", text_len=len(text))
-            return AgentResult(
-                task_id=task.id,
-                agent_id=self.agent_id,
-                agent_type=self.agent_type,
-                status=ResultStatus.SUCCESS,
-                output={
-                    "response": text[:15000],
-                    "retrieved": [{"text": text[:15000], "source": "fallback_text", "score": 0.8}],
-                },
-            )
+            elif result.get("error"):
+                logger.warning("raganything.query_error", error=result["error"])
 
         return AgentResult(
             task_id=task.id,
             agent_id=self.agent_id,
             agent_type=self.agent_type,
             status=ResultStatus.PARTIAL,
-            output={"response": "", "retrieved": [], "message": "No content available"},
+            output={"response": "", "retrieved": [], "message": "RAG engine not available or no results"},
         )
 
     async def _legacy_ingest(self, task: Task, file_path: str) -> AgentResult:

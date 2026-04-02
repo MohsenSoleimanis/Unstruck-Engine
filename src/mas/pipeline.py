@@ -81,10 +81,11 @@ class MASPipeline:
         self.mcp_client = MCPToolClient()
         self.mcp_client.register_builtin_tools()
 
-        # RAG-Anything engine
+        # RAG-Anything engine (with vision model for image processing)
         self.rag_engine = RAGEngine(
             working_dir=str(self.config.data_dir / "raganything"),
             llm_model=self.config.llm.worker_model,
+            vision_model=self.config.llm.vision_model,
             embedding_model=self.config.llm.embedding_model,
             embedding_dim=self.config.llm.embedding_dim,
         )
