@@ -173,14 +173,27 @@ class RAGEngine:
         try:
             if _RAG_AVAILABLE and isinstance(self._rag, RAGAnything):
                 if self._check_parser():
-                    # Full RAG-Anything pipeline with MinerU parser
-                    logger.info("rag_engine.full_pipeline", file_path=file_path)
-                    await self._rag.process_document_complete(
-                        file_path=file_path,
-                        doc_id=doc_id or Path(file_path).stem,
-                    )
+                    try:
+                        # Full RAG-Anything pipeline with MinerU parser
+                        logger.info("rag_engine.full_pipeline", file_path=file_path)
+                        await self._rag.process_document_complete(
+                            file_path=file_path,
+                            doc_id=doc_id or Path(file_path).stem,
+                        )
+                    except Exception as parse_err:
+                        # MinerU failed (timeout, OOM, etc) — fallback to content list
+                        logger.warning("rag_engine.mineru_failed_fallback", error=str(parse_err))
+                        content_list = self._parse_to_rag_format(file_path)
+                        await self._rag.insert_content_list(
+                            content_list,
+                            file_path=file_path,
+                            doc_id=doc_id or Path(file_path).stem,
+                        )
                 else:
-                    # No MinerU — parse ourselves, use insert_content_list
+                    # No MinerU — parse with PyMuPDF, use insert_content_list
+                    # This still goes through RAG-Anything's full pipeline:
+                    # separate text/multimodal → LightRAG KG for text →
+                    # modal processors for tables/images → merge into KG
                     logger.info("rag_engine.content_list_pipeline", file_path=file_path)
                     content_list = self._parse_to_rag_format(file_path)
                     await self._rag.insert_content_list(
