@@ -112,12 +112,16 @@ class RAGEngine:
             )
 
             if _RAG_AVAILABLE:
+                # Use Docling as parser — no GPU needed, handles tables + images
+                # Falls back to MinerU if Docling not installed
+                parser = "docling"
                 self._rag = RAGAnything(
                     llm_model_func=llm_func,
                     vision_model_func=vision_func,
                     embedding_func=embed_func,
                     config=RAGAnythingConfig(
                         working_dir=str(self.working_dir),
+                        parser=parser,
                         enable_image_processing=True,
                         enable_table_processing=True,
                         enable_equation_processing=True,
