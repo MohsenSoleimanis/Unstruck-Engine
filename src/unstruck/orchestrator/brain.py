@@ -100,6 +100,15 @@ def build_graph(
             "requires_document": bool(state.get("user_context", {}).get("file_path")),
         })
 
+        # Trigger document ingestion if file attached
+        file_path = state.get("user_context", {}).get("file_path", "")
+        if file_path:
+            session_id = state.get("session_id", "default")
+            # Get session from the session manager via the router (if available)
+            from unstruck.memory.session import Session
+            session = Session(session_id, config.data_dir / "sessions")
+            await context_engine.ensure_ingested(file_path, session=session)
+
         return {
             "understanding": understanding,
             "current_phase": "validating",

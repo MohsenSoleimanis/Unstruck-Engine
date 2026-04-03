@@ -92,13 +92,15 @@ class BaseAgent(ABC):
         system_prompt: str,
         user_prompt: str,
         context: str = "",
+        retrieve_for: str = "",
         model_name: str = "",
     ) -> ContextEngineResult:
         """
         Make an LLM call through the Context Engine.
 
         This is how agents interact with LLMs. Never call llm.ainvoke() directly.
-        The Context Engine handles budget, truncation, hooks, cost tracking.
+        The Context Engine handles budget, truncation, hooks, cost tracking,
+        and automatic RAG retrieval (if retrieve_for is set).
         """
         from unstruck.config import get_config
         config = get_config()
@@ -108,7 +110,6 @@ class BaseAgent(ABC):
             tier = agent_config.get("model_tier", "worker")
             model_name = config.get_model_tier(tier)["primary"]
 
-        # Get the LLM instance for this model
         llm = self._get_llm(model_name)
 
         return await self.context_engine.call(
@@ -116,6 +117,7 @@ class BaseAgent(ABC):
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             context=context,
+            retrieve_for=retrieve_for,
             agent_id=self.agent_id,
             model_name=model_name,
         )

@@ -1,19 +1,22 @@
 """Context Engine — governs every LLM call in the system.
 
 No agent calls an LLM directly. They go through this engine, which:
-  1. Checks token budget (PreLLMCall hook can BLOCK if over ceiling)
-  2. Assembles the prompt (system + context + history + instructions)
-  3. Truncates to fit the token budget
-  4. Makes the LLM call
-  5. Extracts citations and tracks cost (PostLLMCall hook)
-  6. Returns the response
+  1. Ensures documents are ingested (calls rag_ingest if needed)
+  2. Retrieves relevant context (calls rag_query transparently)
+  3. Checks token budget (PreLLMCall hook can BLOCK if over ceiling)
+  4. Assembles the prompt (system + retrieved context + history + instructions)
+  5. Truncates to fit the token budget
+  6. Makes the LLM call
+  7. Extracts citations and tracks cost (PostLLMCall hook)
+  8. Returns the response
 
-This is where context engineering lives — not scattered across agents.
+Agents never know about RAG. The Context Engine handles all retrieval
+transparently. This is where context engineering lives.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from langchain_core.language_models import BaseChatModel
@@ -25,15 +28,24 @@ from unstruck.context.result import ContextEngineResult
 from unstruck.context.tokens import count_tokens, truncate_to_tokens
 from unstruck.hooks import HookAction, HookEvent, HookManager, HookResult
 
+if TYPE_CHECKING:
+    from unstruck.memory.session import Session
+    from unstruck.tools.registry import ToolRegistry
+
 logger = structlog.get_logger()
 
 
 class ContextEngine:
     """
-    Central engine for all LLM interactions.
+    Central engine for all LLM interactions and context management.
 
-    Every agent calls context_engine.call() instead of llm.ainvoke().
-    The engine handles budget, assembly, truncation, hooks, and tracking.
+    Handles:
+      - Document ingestion (transparent to agents)
+      - Context retrieval from RAG-Anything (transparent to agents)
+      - Token budget enforcement
+      - Prompt assembly and truncation
+      - Hook firing (PreLLMCall, PostLLMCall)
+      - Cost tracking
     """
 
     def __init__(
@@ -41,13 +53,80 @@ class ContextEngine:
         config: Config,
         hooks: HookManager,
         budget: TokenBudget,
+        tool_registry: ToolRegistry | None = None,
     ) -> None:
         self._config = config
         self._hooks = hooks
         self._budget = budget
+        self._tool_registry = tool_registry
         self._call_count: int = 0
         self._total_input_tokens: int = 0
         self._total_output_tokens: int = 0
+
+    def set_tool_registry(self, registry: ToolRegistry) -> None:
+        """Set the tool registry (called during bootstrap after both are created)."""
+        self._tool_registry = registry
+
+    # ── Document Ingestion (transparent to agents) ──────────────
+
+    async def ensure_ingested(self, file_path: str, session: Session | None = None) -> bool:
+        """
+        Ensure a document is ingested into RAG-Anything.
+
+        Checks session first — if already ingested, skips.
+        Calls rag_ingest tool if needed.
+        Returns True if document is ready for querying.
+        """
+        if not file_path:
+            return False
+
+        # Check session — already ingested?
+        if session and session.has_document(file_path):
+            logger.debug("context_engine.already_ingested", file_path=file_path)
+            return True
+
+        # Call rag_ingest tool
+        if not self._tool_registry or not self._tool_registry.has("rag_ingest"):
+            logger.warning("context_engine.no_rag_ingest_tool")
+            return False
+
+        logger.info("context_engine.ingesting", file_path=file_path)
+        result = await self._tool_registry.call("rag_ingest", file_path=file_path)
+
+        if result.get("indexed"):
+            if session:
+                session.register_document(file_path, result.get("doc_id", file_path))
+                session.save()
+            logger.info("context_engine.ingested", file_path=file_path, doc_id=result.get("doc_id"))
+            return True
+
+        logger.warning("context_engine.ingest_failed", file_path=file_path, error=result.get("error"))
+        return False
+
+    # ── Context Retrieval (transparent to agents) ───────────────
+
+    async def retrieve(self, query: str) -> str:
+        """
+        Retrieve relevant context for a query from RAG-Anything.
+
+        Returns the retrieved text, or empty string if unavailable.
+        """
+        if not self._tool_registry or not self._tool_registry.has("rag_query"):
+            return ""
+
+        result = await self._tool_registry.call("rag_query", query=query)
+        response = result.get("response", "")
+
+        if response and not result.get("error"):
+            logger.debug("context_engine.retrieved", query=query[:60], response_len=len(response))
+            return response
+
+        if result.get("error"):
+            logger.debug("context_engine.retrieve_failed", error=result["error"])
+
+        return ""
+
+    # ── LLM Call (the main entry point for agents) ──────────────
 
     async def call(
         self,
@@ -56,24 +135,15 @@ class ContextEngine:
         system_prompt: str,
         user_prompt: str,
         context: str = "",
+        retrieve_for: str = "",
         agent_id: str = "unknown",
         model_name: str = "unknown",
-        max_response_tokens: int | None = None,
     ) -> ContextEngineResult:
         """
         Make an LLM call with full context management.
 
-        Args:
-            llm: The LangChain LLM instance.
-            system_prompt: System/role instructions.
-            user_prompt: The user's query or agent's task instruction.
-            context: Retrieved context to include (from RAG, memory, etc.)
-            agent_id: Who is making this call (for budget tracking).
-            model_name: Which model (for cost calculation).
-            max_response_tokens: Override max tokens for the response.
-
-        Returns:
-            ContextEngineResult with the response text, token usage, and cost.
+        If retrieve_for is set and no explicit context provided,
+        auto-retrieves from RAG-Anything. Agents never know about RAG.
         """
 
         # --- 1. Budget check ---
@@ -85,14 +155,18 @@ class ContextEngine:
                 block_reason="Token budget exhausted",
             )
 
-        # --- 2. Assemble the prompt ---
+        # --- 2. Auto-retrieve context if requested ---
+        if retrieve_for and not context:
+            context = await self.retrieve(retrieve_for)
+
+        # --- 3. Assemble the prompt ---
         assembled_context = self._assemble(context, agent_id)
 
         full_user_prompt = user_prompt
         if assembled_context:
             full_user_prompt = f"{assembled_context}\n\n---\n\n{user_prompt}"
 
-        # --- 3. Fire PreLLMCall hook ---
+        # --- 4. Fire PreLLMCall hook ---
         hook_context = {
             "agent_id": agent_id,
             "model": model_name,
@@ -111,19 +185,13 @@ class ContextEngine:
             )
 
         if pre_result.action == HookAction.MODIFY and pre_result.data:
-            # Check for cached response from AgentCache hook
             cached = pre_result.data.get("_cached_response")
             if cached is not None:
-                return ContextEngineResult(
-                    text=cached,
-                    input_tokens=0,
-                    output_tokens=0,
-                    cost_usd=0.0,
-                )
+                return ContextEngineResult(text=cached)
             system_prompt = pre_result.data.get("system_prompt", system_prompt)
             full_user_prompt = pre_result.data.get("user_prompt", full_user_prompt)
 
-        # --- 4. Build messages and call LLM ---
+        # --- 5. Build messages and call LLM ---
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=full_user_prompt),
@@ -132,7 +200,7 @@ class ContextEngine:
         response = await llm.ainvoke(messages)
         response_text = response.content if hasattr(response, "content") else str(response)
 
-        # --- 5. Extract token usage ---
+        # --- 6. Extract token usage ---
         input_tokens = 0
         output_tokens = 0
         usage = getattr(response, "usage_metadata", None)
@@ -140,23 +208,22 @@ class ContextEngine:
             input_tokens = usage.get("input_tokens", 0)
             output_tokens = usage.get("output_tokens", 0)
         else:
-            # Estimate from text
             input_tokens = count_tokens(system_prompt + full_user_prompt)
             output_tokens = count_tokens(response_text)
 
         total_tokens = input_tokens + output_tokens
 
-        # --- 6. Record in budget ---
+        # --- 7. Record in budget ---
         self._budget.record(agent_id, total_tokens)
         self._call_count += 1
         self._total_input_tokens += input_tokens
         self._total_output_tokens += output_tokens
 
-        # --- 7. Calculate cost ---
+        # --- 8. Calculate cost ---
         inp_price, out_price = self._config.get_model_pricing(model_name)
         cost = (input_tokens * inp_price + output_tokens * out_price) / 1_000_000
 
-        # --- 8. Fire PostLLMCall hook ---
+        # --- 9. Fire PostLLMCall hook ---
         post_context = {
             "agent_id": agent_id,
             "model": model_name,
@@ -185,7 +252,6 @@ class ContextEngine:
         if context_tokens <= max_context_tokens:
             return context
 
-        # Truncate context to fit budget
         truncated = truncate_to_tokens(context, max_context_tokens)
         logger.debug(
             "context_engine.truncated",
@@ -196,13 +262,7 @@ class ContextEngine:
         return truncated
 
     async def compress(self, text: str, llm: BaseChatModel, max_tokens: int = 20000) -> str:
-        """
-        Compress text by summarizing it via LLM.
-
-        Used when context window is near capacity. Fires PreCompress hook
-        so handlers can mark critical info as "do not compress".
-        """
-        # Fire PreCompress hook
+        """Compress text by summarizing it via LLM."""
         pre = await self._hooks.fire(HookEvent.PRE_COMPRESS, {"text": text})
         if pre.action == HookAction.MODIFY and pre.data:
             text = pre.data.get("text", text)

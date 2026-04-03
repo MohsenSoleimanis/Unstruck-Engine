@@ -37,30 +37,26 @@ class AnalystAgent(BaseAgent):
             config.get_agent_config("analyst")["prompt"]
         )
 
-        # Build context from what's available in the task
+        # Check for explicit context (from other agents or manual injection)
         context = task.context.get("retrieved_context", "")
         if not context:
             context = task.context.get("rag_response", "")
         if not context:
             context = task.context.get("text_content", "")
 
-        if not context:
-            return AgentResult(
-                task_id=task.id,
-                agent_id=self.agent_id,
-                agent_type=self.agent_type,
-                status=ResultStatus.PARTIAL,
-                output={"answer": "No context available to answer the question.", "confidence": "low"},
-            )
-
+        # Build prompt with question. Context is handled by the Context Engine:
+        # - If explicit context exists, it's passed directly
+        # - If not, Context Engine auto-retrieves via RAG (retrieve_for)
         prompt = _safe_format(prompt_template,
-            context=context,
+            context=context if context else "(Context will be provided by the retrieval system)",
             question=task.instruction,
         )
 
         result = await self.llm_call(
             system_prompt="You are an Analyst agent. Output valid JSON only.",
             user_prompt=prompt,
+            context=context,
+            retrieve_for=task.instruction if not context else "",
         )
 
         if result.blocked:

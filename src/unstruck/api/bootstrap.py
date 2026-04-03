@@ -131,6 +131,9 @@ def create_platform(env: str = "default") -> Platform:
     rag_service = RAGService(config)
     register_rag_tools(tool_registry, rag_service)
 
+    # Wire tool registry into Context Engine (for RAG retrieval + ingestion)
+    context_engine.set_tool_registry(tool_registry)
+
     logger.info("bootstrap.tools_registered", count=tool_registry.count)
 
     # 9. Agent registry
