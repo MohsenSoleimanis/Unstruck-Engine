@@ -1,0 +1,44 @@
+# Permission & Authorization Rules
+
+roles:
+  admin:
+    agents: all
+    tools: all
+    max_cost_per_session: 10.00
+    max_cost_per_day: 100.00
+    max_concurrent_sessions: 10
+
+  user:
+    agents:
+      - analyst
+      - synthesizer
+      - kg_reasoner
+    tools:
+      - rag_ingest
+      - rag_query
+      - fs_read
+      - fs_list
+      - http_get
+      - db_query
+    max_cost_per_session: 1.00
+    max_cost_per_day: 10.00
+    max_concurrent_sessions: 3
+
+  viewer:
+    agents:
+      - analyst
+    tools:
+      - rag_query
+      - fs_read
+    max_cost_per_session: 0.10
+    max_cost_per_day: 1.00
+    max_concurrent_sessions: 1
+
+# Agent trust levels determine when human approval is needed
+trust_levels:
+  auto: "Execute without asking user"
+  confirm: "Show plan to user, ask before executing"
+  strict: "Ask user before every tool call"
+
+# Default trust level for unknown/new agents
+default_trust_level: confirm

@@ -1,0 +1,58 @@
+# LLM Model Configuration
+# Each tier serves a different purpose to optimize cost vs quality.
+
+tiers:
+  orchestrator:  # For the brain — planning, strategy, evaluation
+    primary: gpt-4o
+    fallback:
+      - claude-sonnet-4-20250514
+      - gpt-4o-mini
+    temperature: 0
+    max_tokens: 4096
+    timeout: 120
+
+  worker:  # For agents — analysis, synthesis, reasoning
+    primary: gpt-4o-mini
+    fallback:
+      - gpt-4.1-nano
+    temperature: 0
+    max_tokens: 8192
+    timeout: 120
+
+  cheap:  # For routing, classification, review, compression
+    primary: gpt-4o-mini
+    fallback:
+      - gpt-4.1-nano
+    temperature: 0
+    max_tokens: 2048
+    timeout: 60
+
+  vision:  # For image analysis
+    primary: gpt-4o
+    fallback:
+      - claude-sonnet-4-20250514
+    temperature: 0
+    max_tokens: 4096
+    timeout: 180
+
+  embedding:
+    model: text-embedding-3-small
+    dimensions: 1536
+
+# Pricing per 1M tokens [input, output] — used by cost tracker
+pricing:
+  gpt-4o: [2.50, 10.00]
+  gpt-4o-mini: [0.15, 0.60]
+  gpt-4.1: [2.00, 8.00]
+  gpt-4.1-mini: [0.40, 1.60]
+  gpt-4.1-nano: [0.10, 0.40]
+  claude-sonnet-4-20250514: [3.00, 15.00]
+  claude-opus-4-20250514: [15.00, 75.00]
+  text-embedding-3-small: [0.02, 0.00]
+
+# Circuit breaker settings
+circuit_breaker:
+  max_retries: 3
+  backoff_base: 2  # Exponential: 2s, 4s, 8s
+  backoff_max: 30
+  circuit_open_duration: 60  # Seconds before trying provider again

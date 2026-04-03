@@ -1,0 +1,22 @@
+# Unstruck Engine — Default Configuration
+# Override per-environment by creating config/production.yaml, config/dev.yaml, etc.
+
+project:
+  name: unstruck-engine
+  version: "2.0.0"
+  data_dir: ./data
+  log_level: INFO  # DEBUG, INFO, WARNING, ERROR
+
+server:
+  host: 0.0.0.0
+  port: 8000
+  cors_origins:
+    - http://localhost:5173
+    - http://localhost:3000
+
+rag:
+  working_dir: ./data/rag
+  parser: docling  # docling, mineru, paddleocr
+  enable_image_processing: true
+  enable_table_processing: true
+  enable_equation_processing: true

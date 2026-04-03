@@ -1,0 +1,21 @@
+# Token & Cost Budget Configuration
+
+tokens:
+  total_budget: 50000           # Max tokens per pipeline run
+  per_agent_budget: 8000        # Max tokens per single agent call
+  context_budget: 12000         # Max tokens for context assembly
+  synthesis_threshold: 0.85     # Trigger early synthesis at 85% budget used
+
+pipeline:
+  max_iterations: 5             # Max plan-execute-review cycles
+  max_agents_per_plan: 8        # Max agents in a single plan
+
+compression:
+  auto_trigger_pct: 0.80        # Auto-compress at 80% of context window
+  circuit_breaker_fails: 3      # Stop retrying after 3 compression failures
+  full_reset_budget: 50000      # Working budget after full compression reset
+  max_summary_tokens: 20000     # Max tokens for compression summary
+
+rate_limiting:
+  requests_per_minute: 30       # Per user
+  tokens_per_minute: 100000     # Per user across all agents

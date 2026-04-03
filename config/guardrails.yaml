@@ -1,0 +1,48 @@
+# Safety & Quality Guardrails
+
+input:
+  prompt_injection:
+    enabled: true
+    patterns:
+      - "ignore previous instructions"
+      - "ignore all instructions"
+      - "you are now"
+      - "pretend you are"
+      - "override your"
+      - "system prompt"
+      - "reveal your prompt"
+      - "disregard"
+    action: reject  # reject | flag | log
+
+  pii_detection:
+    enabled: true
+    types:
+      - email
+      - phone
+      - ssn
+      - credit_card
+      - ip_address
+    action: flag  # flag = warn but allow
+
+  max_input_length: 50000  # Characters
+
+output:
+  pii_stripping:
+    enabled: true
+    types:
+      - email
+      - phone
+      - ssn
+      - credit_card
+
+  hallucination_check:
+    enabled: true
+    require_citations: true
+    min_confidence: 0.5  # Below this = add disclaimer
+
+  max_output_length: 100000  # Characters
+
+ethical:
+  enabled: true
+  escalate_to_human: true
+  blocked_topics: []  # Add topics that should be refused

@@ -1,0 +1,62 @@
+# Tool Registry
+# Every external capability agents can call.
+# Permission levels: read (safe), write (modifies state), destructive (irreversible).
+
+tools:
+  # --- RAG-Anything ---
+  rag_ingest:
+    description: "Ingest a document via RAG-Anything (parse, build KG, index)"
+    permission_level: write
+    sandbox: {}
+
+  rag_query:
+    description: "Query RAG-Anything knowledge graph for relevant context"
+    permission_level: read
+    sandbox: {}
+
+  # --- Filesystem (sandboxed) ---
+  fs_read:
+    description: "Read a file from the sandboxed data directory"
+    permission_level: read
+    sandbox:
+      root: ./data
+
+  fs_write:
+    description: "Write content to a file in the sandboxed data directory"
+    permission_level: write
+    sandbox:
+      root: ./data
+
+  fs_list:
+    description: "List files in a directory"
+    permission_level: read
+    sandbox:
+      root: ./data
+
+  # --- HTTP ---
+  http_get:
+    description: "Make an HTTP GET request"
+    permission_level: read
+    sandbox:
+      domain_whitelist: []  # Empty = all allowed
+
+  http_post:
+    description: "Make an HTTP POST request with JSON body"
+    permission_level: write
+    sandbox:
+      domain_whitelist: []
+
+  # --- Database ---
+  db_query:
+    description: "Execute a SQL SELECT query against a SQLite database"
+    permission_level: read
+    sandbox:
+      allowed_prefixes: [SELECT, PRAGMA, EXPLAIN]
+      blocked_keywords: [DROP, TRUNCATE, DELETE, INSERT, UPDATE, ALTER, EXEC]
+
+  db_execute:
+    description: "Execute a SQL write statement (INSERT/UPDATE/DELETE/CREATE)"
+    permission_level: write
+    sandbox:
+      allowed_prefixes: [INSERT, UPDATE, DELETE, CREATE, ALTER]
+      blocked_keywords: [DROP, TRUNCATE, EXEC]
