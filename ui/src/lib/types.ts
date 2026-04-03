@@ -1,4 +1,4 @@
-/** Shared TypeScript types — mirrors backend Pydantic models. */
+/** Shared TypeScript types — mirrors v2 backend models. */
 
 export interface Conversation {
   id: string;
@@ -17,7 +17,6 @@ export interface Message {
   cost_usd?: number;
   duration_ms?: number;
   agent_activity?: AgentEvent[];
-  sources?: Source[];
 }
 
 export interface AgentEvent {
@@ -26,44 +25,14 @@ export interface AgentEvent {
   status: "pending" | "running" | "success" | "partial" | "failed";
   instruction?: string;
   duration_ms?: number;
-  tokens?: { input_tokens: number; output_tokens: number };
   cost_usd?: number;
 }
 
-export interface Source {
-  id: string;
-  text: string;
-  metadata: Record<string, unknown>;
-  distance?: number;
-  rerank_score?: number;
-}
-
-export interface KGNode {
-  id: string;
-  entity_type?: string;
-  name?: string;
-  [key: string]: unknown;
-}
-
-export interface KGEdge {
-  source: string;
-  target: string;
-  relation_type?: string;
-  [key: string]: unknown;
-}
-
-export interface KGGraph {
-  nodes: KGNode[];
-  edges: KGEdge[];
-  stats: { nodes: number; edges: number };
-}
-
 export interface CostSummary {
-  session: {
-    total_tokens: number;
-    total_cost_usd: number;
-    num_calls: number;
-  };
+  total_cost_usd: number;
+  total_tokens: number;
+  total_calls: number;
+  ceiling_usd: number;
   by_agent: Record<string, { tokens: number; cost: number }>;
 }
 
@@ -71,9 +40,24 @@ export interface AgentInfo {
   agent_type: string;
   description: string;
   version: string;
+  model_tier: string;
+  allowed_tools: string[];
+  trust_level: string;
 }
 
-export type StreamEventType = "phase" | "plan" | "task_complete" | "done" | "error";
+export interface ToolInfo {
+  name: string;
+  description: string;
+  permission_level: string;
+}
+
+export type StreamEventType =
+  | "phase"
+  | "plan"
+  | "evaluation"
+  | "decision"
+  | "done"
+  | "error";
 
 export interface StreamEvent {
   event: StreamEventType;
@@ -83,6 +67,5 @@ export interface StreamEvent {
 export interface UploadedFile {
   name: string;
   size_bytes: number;
-  modified?: number;
   extension: string;
 }

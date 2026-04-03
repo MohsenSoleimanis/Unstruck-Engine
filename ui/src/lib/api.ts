@@ -1,6 +1,6 @@
-/** API client — typed fetch wrappers for all backend endpoints. */
+/** API client — typed fetch wrappers for v2 backend. */
 
-import type { AgentInfo, Conversation, CostSummary, KGGraph, Message, UploadedFile } from "./types";
+import type { AgentInfo, Conversation, CostSummary, Message, ToolInfo, UploadedFile } from "./types";
 
 const BASE = "/api";
 
@@ -14,15 +14,6 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error(`API error ${res.status}: ${body}`);
   }
   return res.json();
-}
-
-// --- Query ---
-
-export async function querySync(query: string, context: Record<string, unknown> = {}, maxIter = 3) {
-  return fetchJSON<{ status: string; results: Record<string, unknown>; cost: CostSummary; duration_ms: number }>(
-    "/query",
-    { method: "POST", body: JSON.stringify({ query, context, max_iterations: maxIter }) },
-  );
 }
 
 // --- Conversations ---
@@ -42,10 +33,10 @@ export async function createConversation(title = "New Chat"): Promise<Conversati
   });
 }
 
-export async function addMessage(conversationId: string, role: string, content: string, metadata?: Record<string, unknown>): Promise<Message> {
+export async function addMessage(conversationId: string, role: string, content: string): Promise<Message> {
   return fetchJSON(`/conversations/${conversationId}/messages`, {
     method: "POST",
-    body: JSON.stringify({ role, content, metadata }),
+    body: JSON.stringify({ role, content }),
   });
 }
 
@@ -71,20 +62,14 @@ export async function deleteFile(name: string): Promise<void> {
   await fetchJSON(`/files/${name}`, { method: "DELETE" });
 }
 
-// --- Knowledge Graph ---
-
-export async function getKGGraph(limit = 500): Promise<KGGraph> {
-  return fetchJSON(`/kg/graph?limit=${limit}`);
-}
-
-export async function getKGSubgraph(entityId: string, depth = 2): Promise<KGGraph> {
-  return fetchJSON(`/kg/subgraph/${entityId}?depth=${depth}`);
-}
-
 // --- System ---
 
 export async function getAgents(): Promise<AgentInfo[]> {
   return fetchJSON("/agents");
+}
+
+export async function getTools(): Promise<ToolInfo[]> {
+  return fetchJSON("/tools");
 }
 
 export async function getHealth() {

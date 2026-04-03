@@ -15,27 +15,26 @@ export function CostSummary() {
     );
   }
 
-  const { session, by_agent } = lastCost;
-  const agents = Object.entries(by_agent).sort((a, b) => b[1].cost - a[1].cost);
+  const agents = Object.entries(lastCost.by_agent).sort((a, b) => b[1].cost - a[1].cost);
 
   return (
     <div className="flex flex-col gap-4 p-4">
       {/* Totals */}
       <div className="grid grid-cols-3 gap-2">
-        <StatCard icon={DollarSign} label="Total Cost" value={formatCost(session.total_cost_usd)} />
-        <StatCard icon={Cpu} label="Tokens" value={formatTokens(session.total_tokens)} />
-        <StatCard icon={Zap} label="LLM Calls" value={String(session.num_calls)} />
+        <StatCard icon={DollarSign} label="Total Cost" value={formatCost(lastCost.total_cost_usd)} />
+        <StatCard icon={Cpu} label="Tokens" value={formatTokens(lastCost.total_tokens)} />
+        <StatCard icon={Zap} label="LLM Calls" value={String(lastCost.total_calls)} />
       </div>
 
       {/* Per-agent breakdown */}
       <div className="space-y-2">
         <h3 className="text-xs font-semibold uppercase text-muted-foreground">By Agent</h3>
-        {agents.map(([agentType, data]) => {
-          const pct = session.total_cost_usd > 0 ? (data.cost / session.total_cost_usd) * 100 : 0;
+        {agents.map(([agentId, data]) => {
+          const pct = lastCost.total_cost_usd > 0 ? (data.cost / lastCost.total_cost_usd) * 100 : 0;
           return (
-            <div key={agentType} className="space-y-1">
+            <div key={agentId} className="space-y-1">
               <div className="flex items-center justify-between text-sm">
-                <span className="font-medium">{agentType}</span>
+                <span className="font-medium truncate max-w-[180px]">{agentId}</span>
                 <span className="text-muted-foreground">{formatCost(data.cost)}</span>
               </div>
               <div className="h-1.5 overflow-hidden rounded-full bg-secondary">

@@ -21,9 +21,14 @@ const STATUS_COLORS = {
 
 const PHASE_LABELS: Record<string, string> = {
   idle: "Idle",
-  planning: "Planning tasks...",
+  starting: "Starting...",
+  understanding: "Understanding intent...",
+  validating: "Validating input...",
+  planning: "Creating task plan...",
   executing: "Executing agents...",
-  reviewing: "Reviewing results...",
+  evaluating: "Evaluating quality...",
+  deciding: "Deciding next step...",
+  replanning: "Replanning...",
   complete: "Complete",
 };
 
