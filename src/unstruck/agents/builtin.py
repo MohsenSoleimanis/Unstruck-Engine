@@ -143,23 +143,16 @@ class KGReasonerAgent(BaseAgent):
         kg_context = task.context.get("kg_context", "")
         question = task.instruction
 
-        if not kg_context:
-            return AgentResult(
-                task_id=task.id,
-                agent_id=self.agent_id,
-                agent_type=self.agent_type,
-                status=ResultStatus.PARTIAL,
-                output={"answer": "No knowledge graph context available.", "confidence": 0.0},
-            )
-
         prompt = _safe_format(prompt_template,
-            kg_context=kg_context,
+            kg_context=kg_context if kg_context else "(Context will be retrieved from knowledge graph)",
             question=question,
         )
 
         result = await self.llm_call(
             system_prompt="You are a Knowledge Graph Reasoner. Output valid JSON only.",
             user_prompt=prompt,
+            context=kg_context,
+            retrieve_for=question if not kg_context else "",
         )
 
         if result.blocked:
