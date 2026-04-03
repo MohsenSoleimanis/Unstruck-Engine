@@ -9,7 +9,7 @@ agents:
     model_tier: worker
     allowed_tools: []
     trust_level: auto
-    prompt: prompts/agents/analyst.md
+    prompt: agents/analyst.md
 
   synthesizer:
     description: "Fuses outputs from multiple agents into a coherent final answer"
@@ -17,7 +17,7 @@ agents:
     model_tier: worker
     allowed_tools: []
     trust_level: auto
-    prompt: prompts/agents/synthesizer.md
+    prompt: agents/synthesizer.md
 
   kg_reasoner:
     description: "Graph traversal + LLM reasoning for multi-hop questions across entities"
@@ -26,4 +26,4 @@ agents:
     allowed_tools:
       - rag_query
     trust_level: auto
-    prompt: prompts/agents/kg_reasoner.md
+    prompt: agents/kg_reasoner.md

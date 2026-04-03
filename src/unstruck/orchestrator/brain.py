@@ -46,6 +46,7 @@ def build_graph(
     hooks: HookManager,
     orchestrator_llm: BaseChatModel,
     worker_llm: BaseChatModel,
+    router: Any | None = None,
 ) -> StateGraph:
     """
     Build the orchestrator LangGraph.
@@ -171,23 +172,36 @@ def build_graph(
     # ── Step 4: Delegate ────────────────────────────────────────
 
     async def delegate(state: PipelineState) -> dict[str, Any]:
-        """
-        Execute tasks via agents.
+        """Execute tasks via the Router → agents."""
+        plan = state.get("plan", [])
+        existing_results = state.get("results", [])
 
-        This is a placeholder — the actual agent execution is wired
-        in the Agent Layer (next layer to build). For now, it returns
-        the state so the graph can be tested structurally.
-        """
-        logger.info("brain.delegate", task_count=len(state.get("plan", [])))
+        logger.info("brain.delegate", task_count=len(plan))
 
-        # Agent execution will be injected here by the Agent Layer.
-        # The delegate node calls router.execute_plan() which dispatches
-        # to agents, passing context through the Context Engine.
-
-        # For now, mark as needing agent layer wiring:
         task_ledger = TaskLedger.model_validate(state.get("task_ledger", {}))
 
+        if router is None:
+            logger.warning("brain.delegate.no_router")
+            return {
+                "current_phase": "evaluating",
+                "iteration": state.get("iteration", 0) + 1,
+                "task_ledger": task_ledger.model_dump(),
+            }
+
+        # Execute tasks through the Router (parallel, dependency-aware)
+        results = await router.execute_plan(plan, existing_results)
+
+        # Update task ledger with results
+        for r in results:
+            task_ledger.record_result(r)
+
+        # Update budget tracking
+        completed_ids = state.get("completed_task_ids", [])
+        new_completed = [r.task_id for r in results if r.status in (ResultStatus.SUCCESS, ResultStatus.PARTIAL)]
+
         return {
+            "results": results,
+            "completed_task_ids": list(set(completed_ids + new_completed)),
             "current_phase": "evaluating",
             "iteration": state.get("iteration", 0) + 1,
             "task_ledger": task_ledger.model_dump(),

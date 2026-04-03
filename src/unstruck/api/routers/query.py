@@ -48,6 +48,7 @@ async def query_sync(request: Request, body: QueryRequest):
             hooks=p.hooks,
             orchestrator_llm=_get_orchestrator_llm(p),
             worker_llm=_get_worker_llm(p),
+            router=p.router,
         )
         compiled = graph.compile()
 

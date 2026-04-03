@@ -111,6 +111,15 @@ class ContextEngine:
             )
 
         if pre_result.action == HookAction.MODIFY and pre_result.data:
+            # Check for cached response from AgentCache hook
+            cached = pre_result.data.get("_cached_response")
+            if cached is not None:
+                return ContextEngineResult(
+                    text=cached,
+                    input_tokens=0,
+                    output_tokens=0,
+                    cost_usd=0.0,
+                )
             system_prompt = pre_result.data.get("system_prompt", system_prompt)
             full_user_prompt = pre_result.data.get("user_prompt", full_user_prompt)
 

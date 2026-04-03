@@ -60,3 +60,16 @@ tools:
     sandbox:
       allowed_prefixes: [INSERT, UPDATE, DELETE, CREATE, ALTER]
       blocked_keywords: [DROP, TRUNCATE, EXEC]
+
+  # --- Data files ---
+  json_read:
+    description: "Read and parse a JSON file"
+    permission_level: read
+    sandbox:
+      root: ./data
+
+  csv_read:
+    description: "Read a CSV file into rows"
+    permission_level: read
+    sandbox:
+      root: ./data
