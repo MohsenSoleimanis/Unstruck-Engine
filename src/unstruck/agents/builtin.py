@@ -18,6 +18,14 @@ from unstruck.config import get_config
 from unstruck.schemas import AgentResult, ResultStatus, Task
 
 
+def _safe_format(template: str, **kwargs: str) -> str:
+    """Safe prompt formatting — doesn't break on { or } in values."""
+    result = template
+    for key, value in kwargs.items():
+        result = result.replace("{" + key + "}", str(value))
+    return result
+
+
 class AnalystAgent(BaseAgent):
     """Reasons over retrieved context to produce grounded answers with citations."""
 
@@ -45,7 +53,7 @@ class AnalystAgent(BaseAgent):
                 output={"answer": "No context available to answer the question.", "confidence": "low"},
             )
 
-        prompt = prompt_template.format(
+        prompt = _safe_format(prompt_template,
             context=context,
             question=task.instruction,
         )
@@ -92,7 +100,7 @@ class SynthesizerAgent(BaseAgent):
         agent_outputs = task.context.get("agent_outputs", {})
         question = task.context.get("original_query", task.instruction)
 
-        prompt = prompt_template.format(
+        prompt = _safe_format(prompt_template,
             question=question,
             agent_outputs=json.dumps(agent_outputs, indent=2, default=str)[:10000],
         )
@@ -148,7 +156,7 @@ class KGReasonerAgent(BaseAgent):
                 output={"answer": "No knowledge graph context available.", "confidence": 0.0},
             )
 
-        prompt = prompt_template.format(
+        prompt = _safe_format(prompt_template,
             kg_context=kg_context,
             question=question,
         )

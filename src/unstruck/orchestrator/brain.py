@@ -40,6 +40,18 @@ from unstruck.schemas import AgentResult, ResultStatus, Task, TaskPriority
 logger = structlog.get_logger()
 
 
+def _safe_format(template: str, **kwargs: str) -> str:
+    """Format a prompt template without breaking on curly braces in values.
+
+    Python's str.format() crashes if values contain { or }.
+    This replaces {key} placeholders manually, leaving other braces intact.
+    """
+    result = template
+    for key, value in kwargs.items():
+        result = result.replace("{" + key + "}", str(value))
+    return result
+
+
 def build_graph(
     config: Config,
     context_engine: ContextEngine,
@@ -67,7 +79,7 @@ def build_graph(
         logger.info("brain.understand", query=query[:80])
 
         prompt_template = config.load_prompt("orchestrator/understand.md")
-        prompt = prompt_template.format(
+        prompt = _safe_format(prompt_template,
             user_message=query,
             session_context=_format_session(session_data),
             conversation_history=_format_history(session_data.get("message_history", [])),
@@ -134,12 +146,12 @@ def build_graph(
 
         prompt_template = config.load_prompt("orchestrator/strategize.md")
         budget_config = config.get_token_budgets()
-        prompt = prompt_template.format(
+        prompt = _safe_format(prompt_template,
             agent_list=agent_list,
             understanding=json.dumps(understanding, default=str),
             user_query=query,
             session_context=session_context,
-            total_budget=budget_config.get("total_budget", 50000),
+            total_budget=str(budget_config.get("total_budget", 50000)),
         )
 
         result = await context_engine.call(
@@ -227,12 +239,12 @@ def build_graph(
             })
 
         prompt_template = config.load_prompt("orchestrator/evaluate.md")
-        prompt = prompt_template.format(
+        prompt = _safe_format(prompt_template,
             task_ledger=task_ledger.for_prompt(),
             agent_results=json.dumps(result_summaries, default=str),
-            tokens_used=budget.get("consumed", 0),
-            tokens_total=budget.get("total", 50000),
-            utilization=round(budget.get("utilization", 0) * 100, 1),
+            tokens_used=str(budget.get("consumed", 0)),
+            tokens_total=str(budget.get("total", 50000)),
+            utilization=str(round(budget.get("utilization", 0) * 100, 1)),
         )
 
         result = await context_engine.call(
@@ -363,12 +375,12 @@ def build_graph(
             f"Generate ONLY the remaining tasks needed. Do not repeat completed work."
         )
 
-        prompt = prompt_template.format(
+        prompt = _safe_format(prompt_template,
             agent_list=agent_list,
             understanding=json.dumps(state.get("understanding", {})),
             user_query=state["user_query"],
             session_context=replan_context,
-            total_budget=state.get("budget", {}).get("remaining", 25000),
+            total_budget=str(state.get("budget", {}).get("remaining", 25000)),
         )
 
         result = await context_engine.call(
