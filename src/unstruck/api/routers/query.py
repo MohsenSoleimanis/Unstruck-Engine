@@ -98,6 +98,7 @@ async def query_stream(request: Request, body: QueryRequest):
                 hooks=p.hooks,
                 orchestrator_llm=_get_orchestrator_llm(p),
                 worker_llm=_get_worker_llm(p),
+                router=p.router,
             )
             compiled = graph.compile()
             initial_state = _build_initial_state(body, session)
