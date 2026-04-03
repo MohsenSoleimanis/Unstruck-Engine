@@ -158,26 +158,36 @@ class RAGService:
         try:
             final_doc_id = doc_id or Path(file_path).stem
 
+            # Try full parser pipeline first
             if self._rag.check_parser_installation():
-                # Full pipeline: Docling/MinerU parse → multimodal processing → KG
-                logger.info("rag_service.ingest.full_pipeline", file_path=file_path, parser=self._rag_config.get("parser"))
-                await self._rag.process_document_complete(
-                    file_path=file_path,
-                    doc_id=final_doc_id,
-                )
-            else:
-                # Fallback: PyMuPDF parse → insert_content_list (still uses RAG-Anything)
-                logger.info("rag_service.ingest.content_list_fallback", file_path=file_path)
-                content_list = self._parse_with_pymupdf(file_path)
-                if not content_list:
-                    return {"error": f"No content extracted from {file_path}", "indexed": False}
-                await self._rag.insert_content_list(
-                    content_list,
-                    file_path=file_path,
-                    doc_id=final_doc_id,
-                )
+                try:
+                    logger.info("rag_service.ingest.full_pipeline", file_path=file_path, parser=self._rag_config.get("parser"))
+                    await self._rag.process_document_complete(
+                        file_path=file_path,
+                        doc_id=final_doc_id,
+                    )
+                    logger.info("rag_service.ingest.complete", doc_id=final_doc_id)
+                    return {"doc_id": final_doc_id, "indexed": True}
+                except Exception as parser_err:
+                    logger.warning("rag_service.ingest.parser_crashed",
+                                   error=str(parser_err)[:200], file_path=file_path)
+                    # Fall through to PyMuPDF fallback below
 
-            logger.info("rag_service.ingest.complete", doc_id=final_doc_id)
+            # Fallback: PyMuPDF parse → insert_content_list
+            # This path runs when: parser not installed, OR parser crashed
+            # Still uses RAG-Anything: text → LightRAG KG, tables → modal processors
+            logger.info("rag_service.ingest.pymupdf_fallback", file_path=file_path)
+            content_list = self._parse_with_pymupdf(file_path)
+            if not content_list:
+                return {"error": f"No content extracted from {file_path}", "indexed": False}
+
+            await self._rag.insert_content_list(
+                content_list,
+                file_path=file_path,
+                doc_id=final_doc_id,
+            )
+
+            logger.info("rag_service.ingest.complete", doc_id=final_doc_id, method="pymupdf_fallback")
             return {"doc_id": final_doc_id, "indexed": True}
 
         except Exception as e:
