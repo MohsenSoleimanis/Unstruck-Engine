@@ -339,6 +339,321 @@ Response to user (streamed via SSE)
 
 ---
 
+## Configuration & Prompts (nothing hardcoded in Python)
+
+### Principle
+
+The platform code **never changes** when you add agents, tools, prompts, or change settings. Everything is external config.
+
+### Directory Structure
+
+```
+MAP/
+├── config/                          # All configuration — YAML, layered
+│   ├── default.yaml                 # Base config (all defaults)
+│   ├── models.yaml                  # LLM models, pricing, fallback chains
+│   ├── agents.yaml                  # Agent registry definitions
+│   ├── tools.yaml                   # Tool registry definitions
+│   ├── permissions.yaml             # Permission rules
+│   ├── budgets.yaml                 # Token/cost budgets
+│   └── guardrails.yaml             # Safety rules (PII patterns, blocked terms)
+│
+├── prompts/                         # All prompts — Markdown, versioned
+│   ├── orchestrator/                # Brain prompts
+│   │   ├── understand.md            # Parse user intent
+│   │   ├── strategize.md            # Create task plan
+│   │   ├── evaluate.md              # Review quality
+│   │   └── decide.md               # What to do next
+│   │
+│   ├── agents/                      # Agent system prompts
+│   │   ├── analyst.md               # Analyst reasoning prompt
+│   │   ├── synthesizer.md           # Synthesizer fusion prompt
+│   │   ├── kg_reasoner.md           # KG reasoning prompt
+│   │   └── {agent_name}.md          # Any new agent — just add a file
+│   │
+│   └── guardrails/                  # Safety prompts
+│       ├── input_safety.md          # Prompt injection detection
+│       ├── output_safety.md         # PII/hallucination check
+│       └── ethical.md               # Ethical boundary check
+│
+├── plugins/                         # Plugin agents (self-contained)
+│   ├── protocol_extractor/
+│   │   ├── agent.yaml               # Registration config
+│   │   ├── prompts/                 # Its own prompts
+│   │   └── agent.py                 # Its logic
+│   │
+│   ├── web_researcher/
+│   │   ├── agent.yaml
+│   │   ├── prompts/
+│   │   └── agent.py
+│   │
+│   └── {your_new_agent}/           # Add a folder = add an agent
+│       ├── agent.yaml
+│       ├── prompts/
+│       └── agent.py
+│
+└── src/mas/                         # Platform code (NEVER changes for new agents/tools)
+```
+
+### Config Files
+
+**`config/models.yaml`** — LLM models and fallback chains
+```yaml
+models:
+  orchestrator:
+    primary: gpt-4o
+    fallback: [claude-sonnet-4-20250514, gpt-4o-mini]
+    temperature: 0
+    max_tokens: 4096
+
+  worker:
+    primary: gpt-4o-mini
+    fallback: [gpt-4.1-nano]
+    temperature: 0
+    max_tokens: 8192
+
+  vision:
+    primary: gpt-4o
+    fallback: [claude-sonnet-4-20250514]
+
+  cheap:  # For routing, classification, review
+    primary: gpt-4o-mini
+    fallback: [gpt-4.1-nano]
+
+pricing:  # Per 1M tokens (input/output)
+  gpt-4o: [2.50, 10.00]
+  gpt-4o-mini: [0.15, 0.60]
+  claude-sonnet-4-20250514: [3.00, 15.00]
+```
+
+**`config/agents.yaml`** — Agent registry definitions
+```yaml
+agents:
+  analyst:
+    description: "Reasons over retrieved context, produces grounded answers"
+    version: "1.0.0"
+    model_tier: worker          # Uses worker model (cheap)
+    allowed_tools: []           # No tools — pure reasoning
+    trust_level: auto           # No human approval needed
+    prompt: prompts/agents/analyst.md
+
+  synthesizer:
+    description: "Fuses outputs from multiple agents"
+    model_tier: worker
+    allowed_tools: []
+    trust_level: auto
+    prompt: prompts/agents/synthesizer.md
+
+  kg_reasoner:
+    description: "Graph traversal + LLM reasoning for multi-hop questions"
+    model_tier: worker
+    allowed_tools: [rag_query]
+    trust_level: auto
+    prompt: prompts/agents/kg_reasoner.md
+```
+
+**`config/tools.yaml`** — Tool registry
+```yaml
+tools:
+  filesystem:
+    read:
+      description: "Read a file (sandboxed)"
+      permission_level: read
+      sandbox: {root: "./data"}
+    write:
+      description: "Write a file (sandboxed)"
+      permission_level: write
+      sandbox: {root: "./data"}
+
+  http:
+    get:
+      description: "HTTP GET request"
+      permission_level: read
+      domain_whitelist: []  # Empty = all allowed
+
+  database:
+    query:
+      description: "SQL SELECT query"
+      permission_level: read
+      allowed_prefixes: [SELECT, PRAGMA, EXPLAIN]
+    execute:
+      description: "SQL write operation"
+      permission_level: write
+      blocked_keywords: [DROP, TRUNCATE]
+
+  rag_ingest:
+    description: "Ingest document via RAG-Anything"
+    permission_level: write
+    trust_level: auto
+
+  rag_query:
+    description: "Query RAG-Anything knowledge graph"
+    permission_level: read
+    trust_level: auto
+```
+
+**`config/permissions.yaml`** — Who can do what
+```yaml
+roles:
+  admin:
+    agents: all
+    tools: all
+    max_cost_per_session: 10.00
+    max_cost_per_day: 100.00
+
+  user:
+    agents: [analyst, synthesizer, kg_reasoner]
+    tools: [filesystem.read, http.get, database.query, rag_ingest, rag_query]
+    max_cost_per_session: 1.00
+    max_cost_per_day: 10.00
+
+  viewer:
+    agents: [analyst]
+    tools: [rag_query]
+    max_cost_per_session: 0.10
+    max_cost_per_day: 1.00
+
+agent_trust_levels:
+  auto: "Execute without asking user"
+  confirm: "Show plan, ask user before executing"
+  strict: "Ask user before every tool call"
+```
+
+**`config/budgets.yaml`** — Token and cost budgets
+```yaml
+defaults:
+  total_budget_tokens: 50000
+  per_agent_budget_tokens: 8000
+  context_budget_tokens: 12000
+  synthesis_threshold: 0.85    # Trigger early synthesis at 85% budget
+  max_iterations: 5
+
+compression:
+  auto_trigger_pct: 0.80       # Auto-compress at 80% window
+  circuit_breaker_fails: 3     # Stop trying after 3 compression failures
+  full_reset_budget: 50000     # Working budget after full reset
+```
+
+**`config/guardrails.yaml`** — Safety rules
+```yaml
+input:
+  prompt_injection:
+    enabled: true
+    patterns:
+      - "ignore previous instructions"
+      - "you are now"
+      - "system prompt"
+    action: reject  # reject | flag | log
+
+  pii_detection:
+    enabled: true
+    types: [email, phone, ssn, credit_card]
+    action: flag
+
+output:
+  pii_stripping:
+    enabled: true
+    types: [email, phone, ssn, credit_card]
+
+  hallucination_check:
+    enabled: true
+    require_citations: true
+    min_confidence: 0.5
+
+  ethical:
+    blocked_topics: []
+    escalate_to_human: true
+```
+
+### Prompts
+
+Every prompt is a Markdown file. Loaded at runtime. Changeable without code deploy.
+
+**`prompts/orchestrator/strategize.md`** example:
+```markdown
+You are the Strategist in the Unstruck Engine orchestrator.
+
+Given the user's request and available agents, create an execution plan.
+
+## Available Agents
+{agent_list}
+
+## Rules
+1. Each task targets one agent from the list above.
+2. Use dependency indices [0, 1, 2...] for ordering.
+3. Independent tasks have no dependencies (run in parallel).
+4. For document questions: ingest → query → analyze.
+5. Allocate token budgets per agent from the total: {total_budget}.
+
+## User Request
+{user_query}
+
+## Session Context
+{session_context}
+
+## Output
+JSON array of task objects.
+```
+
+**`prompts/agents/analyst.md`** example:
+```markdown
+You are an Analyst agent. Answer the question using ONLY the provided context.
+
+## Rules
+1. Every claim must cite a source (page number, chunk ID, or entity name).
+2. If the context doesn't contain enough information, say so explicitly.
+3. Rate your confidence: high (directly stated), medium (inferred), low (speculative).
+4. Structure your answer clearly with key points.
+
+## Context
+{context}
+
+## Question
+{question}
+```
+
+### Plugin Agents
+
+Each plugin is a self-contained folder. The platform auto-discovers and registers them.
+
+**`plugins/protocol_extractor/agent.yaml`**:
+```yaml
+name: protocol_extractor
+description: "Extracts clinical trial protocol data (endpoints, eligibility, design)"
+version: "1.0.0"
+model_tier: worker
+allowed_tools: [rag_query, rag_ingest]
+trust_level: auto
+prompt: prompts/extract.md
+```
+
+**Adding a new agent**: 
+1. Create folder in `plugins/`
+2. Write `agent.yaml` (registration) + `prompts/` (its prompts) + `agent.py` (logic)
+3. Restart server
+4. Orchestrator discovers it, planner can use it
+
+No platform code changes. Ever.
+
+### What Changes Where
+
+| I want to... | I change... | Code change? |
+|---|---|---|
+| Add a new agent | `plugins/{name}/` folder | No |
+| Change a prompt | `prompts/{file}.md` | No |
+| Change LLM model | `config/models.yaml` | No |
+| Add a fallback model | `config/models.yaml` | No |
+| Change permissions | `config/permissions.yaml` | No |
+| Change token budget | `config/budgets.yaml` | No |
+| Add a safety rule | `config/guardrails.yaml` | No |
+| Add a new MCP tool | Connect MCP server + `config/tools.yaml` | No |
+| Change agent's allowed tools | `config/agents.yaml` | No |
+| Change trust levels | `config/permissions.yaml` | No |
+| Add enterprise rules | Hook functions (Python) | Minimal |
+| Add a new retrieval strategy | `src/mas/context/` | Yes (platform extension) |
+
+---
+
 ## Tech Stack
 
 | Layer | Technology |
