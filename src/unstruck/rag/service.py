@@ -118,8 +118,7 @@ class RAGService:
                 embedding_func=embed_func,
             )
             await self._lightrag.initialize_storages()
-            logger.info("rag_service.lightrag_loaded",
-                        nodes=self._lightrag.chunk_entity_relation_graph.number_of_nodes() if hasattr(self._lightrag, 'chunk_entity_relation_graph') else 0)
+            logger.info("rag_service.lightrag_loaded", working_dir=working_dir)
 
             # Parser from config
             parser = self._rag_config.get("parser", "docling")
