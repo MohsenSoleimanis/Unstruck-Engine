@@ -110,11 +110,23 @@ class RAGService:
                 func=lambda texts: openai_embed(texts, model=embed_model),
             )
 
+            # Create LightRAG first — loads existing KG data from disk
+            self._lightrag = LightRAG(
+                working_dir=working_dir,
+                llm_model_func=llm_func,
+                llm_model_name=llm_model,
+                embedding_func=embed_func,
+            )
+            await self._lightrag.initialize_storages()
+            logger.info("rag_service.lightrag_loaded",
+                        nodes=self._lightrag.chunk_entity_relation_graph.number_of_nodes() if hasattr(self._lightrag, 'chunk_entity_relation_graph') else 0)
+
             # Parser from config
             parser = self._rag_config.get("parser", "docling")
 
-            # Create RAG-Anything
+            # Create RAG-Anything with pre-initialized LightRAG
             self._rag = RAGAnything(
+                lightrag=self._lightrag,
                 llm_model_func=llm_func,
                 vision_model_func=vision_func,
                 embedding_func=embed_func,
@@ -125,9 +137,6 @@ class RAGService:
                     enable_table_processing=self._rag_config.get("enable_table_processing", True),
                     enable_equation_processing=self._rag_config.get("enable_equation_processing", True),
                 ),
-                lightrag_kwargs={
-                    "llm_model_name": llm_model,
-                },
             )
 
             self._initialized = True
