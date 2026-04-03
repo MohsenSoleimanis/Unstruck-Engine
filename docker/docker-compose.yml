@@ -1,0 +1,49 @@
+version: "3.9"
+
+services:
+  # --- Backend API ---
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../.env
+    volumes:
+      - app-data:/app/data
+    restart: unless-stopped
+
+  # --- Development (hot reload) ---
+  api-dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../.env
+    volumes:
+      - ../src:/app/src
+      - ../config:/app/config
+      - ../prompts:/app/prompts
+      - ../plugins:/app/plugins
+      - app-data:/app/data
+    profiles:
+      - dev
+
+  # --- Frontend dev server ---
+  ui-dev:
+    image: node:20-slim
+    working_dir: /ui
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ../ui:/ui
+      - /ui/node_modules
+    profiles:
+      - dev
+
+volumes:
+  app-data:
